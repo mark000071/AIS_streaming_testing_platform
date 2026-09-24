@@ -1,0 +1,104 @@
+{
+  "description": "An eligible 30-step history window published on ``windows.eligible``.\n\ntokens columns: x, y (m east/north of anchor), sog (kn), cog (deg), sin cog, cos cog,\nreport age (s), dead-reckoned flag.",
+  "properties": {
+    "window_id": {
+      "title": "Window Id",
+      "type": "string"
+    },
+    "mmsi": {
+      "title": "Mmsi",
+      "type": "integer"
+    },
+    "feed": {
+      "title": "Feed",
+      "type": "string"
+    },
+    "anchor_ts": {
+      "title": "Anchor Ts",
+      "type": "number"
+    },
+    "enqueue_wall": {
+      "title": "Enqueue Wall",
+      "type": "number"
+    },
+    "anchor_lat": {
+      "title": "Anchor Lat",
+      "type": "number"
+    },
+    "anchor_lon": {
+      "title": "Anchor Lon",
+      "type": "number"
+    },
+    "tokens": {
+      "description": "float32 array of shape (30, 8); Arrow IPC list<float32> column on the wire",
+      "title": "Tokens",
+      "type": "array",
+      "x-dtype": "float32",
+      "x-shape": "(30, 8)"
+    },
+    "abs_xy": {
+      "description": "(lat, lon) of each history step",
+      "title": "Abs Xy",
+      "type": "array",
+      "x-dtype": "float64",
+      "x-shape": "(30, 2)"
+    },
+    "tile_id": {
+      "default": "none",
+      "title": "Tile Id",
+      "type": "string"
+    },
+    "tile_offset": {
+      "default": [
+        0,
+        0
+      ],
+      "maxItems": 2,
+      "minItems": 2,
+      "prefixItems": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "integer"
+        }
+      ],
+      "title": "Tile Offset",
+      "type": "array"
+    },
+    "geom": {
+      "description": "float32 array of shape (19,); Arrow IPC list<float32> column on the wire",
+      "title": "Geom",
+      "type": "array",
+      "x-dtype": "float32",
+      "x-shape": "(19,)"
+    },
+    "tags": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Tags",
+      "type": "array"
+    },
+    "protocol_version": {
+      "default": "0.1",
+      "title": "Protocol Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "window_id",
+    "mmsi",
+    "feed",
+    "anchor_ts",
+    "enqueue_wall",
+    "anchor_lat",
+    "anchor_lon",
+    "tokens",
+    "abs_xy",
+    "geom",
+    "tags"
+  ],
+  "title": "Window",
+  "type": "object"
+}

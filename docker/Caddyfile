@@ -1,0 +1,22 @@
+{
+	admin off
+}
+
+# Set SITE_ADDRESS=your.domain to get automatic TLS; the default serves plain HTTP on :80.
+{$SITE_ADDRESS::80} {
+	encode zstd gzip
+
+	handle /v1/* {
+		reverse_proxy api:8000
+	}
+	handle /stream/* {
+		reverse_proxy api:8000 {
+			flush_interval -1
+		}
+	}
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}

@@ -1,2 +1,7 @@
 __pycache__/
 *.pyc
+data/
+.venv/
+web/node_modules/
+web/dist/
+*.tsbuildinfo

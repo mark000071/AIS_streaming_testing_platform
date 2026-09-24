@@ -1,0 +1,133 @@
+# docker compose --profile replay up --build     # replay the bundled Digitraffic hour at 20x
+# docker compose --profile live up --build       # live Finnish AIS via Digitraffic MQTT
+# add --profile ops for Prometheus + Grafana
+
+x-py: &py
+  build:
+    context: .
+    dockerfile: docker/Dockerfile
+  image: envship/platform:dev
+  restart: unless-stopped
+  environment:
+    REDIS_URL: redis://redis:6379/0
+    ENVSHIP_DATA_DIR: /data
+    ENVSHIP_METRICS_PORT: "9100"
+  volumes:
+    - archive:/data
+  depends_on:
+    redis:
+      condition: service_healthy
+
+x-predictor: &predictor
+  <<: *py
+  deploy:
+    resources:
+      limits:
+        cpus: "2"
+        memory: 4g
+
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--save", ""]
+    restart: unless-stopped
+    volumes:
+      - redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      retries: 30
+
+  ingest-fi:
+    <<: *py
+    profiles: [live]
+    command: ["ingest-fi"]
+
+  replay:
+    <<: *py
+    profiles: [replay]
+    command: ["replay"]
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      ENVSHIP_DATA_DIR: /data
+      ENVSHIP_REPLAY_SPEED: ${REPLAY_SPEED:-20}
+
+  tracker:
+    <<: *py
+    command: ["tracker"]
+
+  reconcile:
+    <<: *py
+    command: ["reconcile"]
+
+  jobs:
+    <<: *py
+    command: ["jobs"]
+
+  api:
+    <<: *py
+    command: ["api"]
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      ENVSHIP_DATA_DIR: /data
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request as u; u.build_opener(u.ProxyHandler({})).open('http://localhost:8000/healthz')"
+      interval: 5s
+      retries: 20
+
+  predictor-cv:
+    <<: *predictor
+    command: ["predictor", "cv"]
+
+  predictor-kalman:
+    <<: *predictor
+    command: ["predictor", "kalman"]
+
+  predictor-imm:
+    <<: *predictor
+    command: ["predictor", "imm"]
+
+  predictor-example:
+    <<: *predictor
+    entrypoint: ["python", "packages/sdk/examples/minimal.py"]
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+    image: envship/web:dev
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+    depends_on:
+      api:
+        condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    profiles: [ops]
+    volumes:
+      - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    profiles: [ops]
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./docker/grafana-datasource.yml:/etc/grafana/provisioning/datasources/prometheus.yml:ro
+    ports:
+      - "3000:3000"
+
+volumes:
+  archive:
+  redis:

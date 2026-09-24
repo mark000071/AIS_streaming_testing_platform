@@ -1,0 +1,59 @@
+{
+  "properties": {
+    "service": {
+      "title": "Service",
+      "type": "string"
+    },
+    "instance": {
+      "title": "Instance",
+      "type": "string"
+    },
+    "ts": {
+      "title": "Ts",
+      "type": "number"
+    },
+    "queue_depth": {
+      "default": 0,
+      "title": "Queue Depth",
+      "type": "integer"
+    },
+    "last_event_ts": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Last Event Ts"
+    },
+    "parity_ok": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Parity Ok"
+    },
+    "counters": {
+      "additionalProperties": {
+        "type": "number"
+      },
+      "title": "Counters",
+      "type": "object"
+    }
+  },
+  "required": [
+    "service",
+    "instance",
+    "ts"
+  ],
+  "title": "HealthBeat",
+  "type": "object"
+}
