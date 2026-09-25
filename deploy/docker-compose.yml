@@ -1,0 +1,27 @@
+# Runs the presentation service standalone (demo mode by default).
+#
+# For bridge mode against a real MCM_streaming/serving deployment, set
+# AIS_DATA_MODE=bridge and bind-mount that deployment's `serving/runtime`
+# directory read-only, e.g.:
+#
+#   services:
+#     ais-platform:
+#       environment:
+#         AIS_DATA_MODE: bridge
+#         AIS_MODEL_DATA_DIR: /model-runtime
+#       volumes:
+#         - /path/to/MCM_streaming/serving/runtime:/model-runtime:ro
+#
+# This compose file never builds or starts MCM_streaming itself -- that
+# stack is deployed and operated independently per its own README.
+services:
+  ais-platform:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: ais-streaming-testing-platform:latest
+    ports:
+      - "8080:8080"
+    env_file:
+      - config/demo.env
+    restart: unless-stopped

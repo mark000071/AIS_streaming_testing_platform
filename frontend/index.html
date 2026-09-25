@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AIS Streaming Testing Platform &mdash; MCM-Net demo</title>
+<link rel="stylesheet" href="static/vendor/leaflet/leaflet.css" />
+<link rel="stylesheet" href="static/style.css" />
+</head>
+<body>
+  <header>
+    <h1>AIS Streaming Testing Platform</h1>
+    <p class="subtitle">Presentation layer for MCM-Net live vessel-trajectory predictions
+      &mdash; combines this repo's UI with the MCM_streaming model/serving output.
+      <span id="data-mode-badge" class="badge">loading&hellip;</span>
+    </p>
+  </header>
+
+  <main>
+    <section id="map-panel">
+      <div id="map"></div>
+    </section>
+
+    <aside id="side-panel">
+      <div class="card" id="metrics-card">
+        <h2>Served rule vs. baselines</h2>
+        <div id="metrics-body">Loading&hellip;</div>
+      </div>
+
+      <div class="card" id="vessel-list-card">
+        <h2>Vessels</h2>
+        <ul id="vessel-list"></ul>
+      </div>
+
+      <div class="card" id="detail-card" hidden>
+        <h2>Prediction detail</h2>
+        <div id="detail-body"></div>
+      </div>
+    </aside>
+  </main>
+
+  <footer>
+    <span>Data source: <code id="source-dir">-</code></span>
+    <button id="reload-btn">Reload data</button>
+  </footer>
+
+<script src="static/vendor/leaflet/leaflet.js"></script>
+<script src="static/app.js"></script>
+</body>
+</html>
