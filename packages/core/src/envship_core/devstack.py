@@ -32,6 +32,25 @@ def _pump(name: str, color: str, proc: subprocess.Popen) -> None:
         sys.stdout.flush()
 
 
+MCMNET_CPU_MAX_SPEED = 5.0
+
+
+def _mcmnet_ready() -> bool:
+    """MCM-Net runs when MCM_ROOT and MCM_WEIGHTS are set and torch is importable."""
+    if not (os.environ.get("MCM_ROOT") and os.environ.get("MCM_WEIGHTS")):
+        return False
+    try:
+        import importlib.util
+
+        missing = [m for m in ("torch", "scipy") if importlib.util.find_spec(m) is None]
+    except ValueError:
+        missing = ["torch"]
+    if missing:
+        print(f"MCM_ROOT/MCM_WEIGHTS are set but {', '.join(missing)} is not installed: skipping MCM-Net")
+        return False
+    return True
+
+
 def main() -> None:
     s = get_settings()
     ap = argparse.ArgumentParser(prog="envship dev")
@@ -40,7 +59,14 @@ def main() -> None:
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--fresh", action="store_true", help="wipe Redis db and the data dir first")
     ap.add_argument("--no-example", action="store_true", help="do not run the SDK example predictor")
+    ap.add_argument(
+        "--no-mcmnet", action="store_true", help="do not run MCM-Net even if MCM_ROOT and MCM_WEIGHTS are set"
+    )
+    ap.add_argument(
+        "--mcmnet-replicas", type=int, default=1, help="MCM-Net predictor processes (share the load)"
+    )
     args = ap.parse_args()
+    mcmnet = _mcmnet_ready() if not args.no_mcmnet else False
 
     procs: list[tuple[str, subprocess.Popen]] = []
     url = urllib.parse.urlparse(s.redis_url)
@@ -84,6 +110,19 @@ def main() -> None:
     ]
     if not args.no_example:
         cmds.append(("predictor-example", [sys.executable, str(ROOT / "packages/sdk/examples/minimal.py")]))
+    if mcmnet:
+        for i in range(max(1, args.mcmnet_replicas)):
+            cmds.append((f"predictor-mcmnet{i or ''}", py + ["envship_predictors.mcmnet"]))
+        if (
+            not args.live
+            and os.environ.get("MCM_DEVICE", "cpu") == "cpu"
+            and args.speed > MCMNET_CPU_MAX_SPEED
+        ):
+            print(
+                f"note: replay {args.speed:g}x produces windows faster than MCM-Net on CPU can answer them "
+                f"(~0.3-0.8 s each); expect stale/missed windows. Use --speed {MCMNET_CPU_MAX_SPEED:g}, "
+                "--mcmnet-replicas, or MCM_DEVICE=cuda."
+            )
     cmds.append((source[0], py + ["envship_core.cli", *source]))
 
     for i, (name, cmd) in enumerate(cmds):

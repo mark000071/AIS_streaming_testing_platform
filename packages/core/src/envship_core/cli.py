@@ -12,6 +12,7 @@ SERVICES = {
     "jobs": "envship_core.jobs",
     "features": "envship_core.features",
     "dev": "envship_core.devstack",
+    "benchmark": "envship_core.benchmark",
 }
 
 

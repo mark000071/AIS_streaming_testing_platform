@@ -17,7 +17,7 @@ figures are cited from `MCM_streaming`, not re-derived here.
 | Continual retrain (`continual/retrain.py`) | `MCM_streaming/serving/continual` | Optional, faster with GPU | same `memonet37` env | Off the request path; periodic batch job, not part of this platform's serving path |
 | **EnvShip platform (this repo)**: ingest / replay / tracker / reconcile / jobs / API + predictor containers | `packages/`, `web/`, `compose.yaml` | No | Python 3.11 (uv workspace), Node 20+ to build `web/` | Redis Streams bus; each predictor is its own container, limited to 2 CPU / 4 GB (`compose.yaml`) |
 | **MCM_streaming deployment viewer (this repo)** | `backend/`, `frontend/`, `deploy/` | No | Python 3.11+ | FastAPI + static Leaflet frontend; reads parquet/JSON/SQLite only, never runs a model |
-| MCM-Net predictor container (planned, roadmap lane B) | this repo, weights from HF | No (CPU inference, see §4) | its own image (torch) | Not built yet; it would run under the same 2 CPU / 4 GB predictor limit |
+| **MCM-Net predictor (`mcmnet`)** | `packages/predictors/.../mcmnet.py`, model code from an MCM_streaming checkout, weights from HF | No for live 1× traffic; yes (or more CPU workers) for fast replay, see §4 | the uv workspace + torch, scipy (`scripts/setup_mcmnet.sh`) | Runs as a process under `envship dev` when `MCM_ROOT`/`MCM_WEIGHTS` are set; ~0.75 GB RSS measured while predicting on CPU (model 281 MB + memory bank 146 MB); no Docker image yet |
 
 ## 2. Environment requirements
 
@@ -149,8 +149,16 @@ CPU … GPU 留给训练"), and its own measurements back it
 **When a GPU would matter:** training and retraining (already on GPU);
 micro-batching many vessels per forward pass at far larger scale; or a
 much heavier future model where compute stops being a rounding error in
-latency. None of these apply to this demo, and the EnvShip roadmap lists
-"GPU 推理（计算占延迟 2.9%）" among the options it rejected (`docs/roadmap.md` §3).
+latency. The EnvShip roadmap lists "GPU 推理（计算占延迟 2.9%）" among the options
+it rejected (`docs/roadmap.md` §3) for live serving.
+
+**The replay demo is the exception.** Live traffic reaches the model at under
+1 window/s, but the default 20× replay produces about 6 windows/s, while one
+CPU `mcmnet` process answers 1.2–3 windows/s (0.3–0.8 s each, measured at 2–4
+threads). Windows that wait longer than the platform's 5 s budget are skipped
+and count as misses. For a replay demo use `envship dev --speed 5`, several
+`--mcmnet-replicas` on a multi-core host, or `MCM_DEVICE=cuda` on a GPU. The
+offline `envship benchmark` has no such limit: it answers every window.
 
 ## 5. Parameters that matter for model inference (cited, not owned, by this repo)
 
