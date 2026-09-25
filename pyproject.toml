@@ -1,0 +1,51 @@
+[project]
+name = "envship-platform"
+version = "0.1.0"
+description = "Self-scoring open online AIS trajectory prediction platform (demo slice)"
+requires-python = ">=3.11,<3.13"
+license = "Apache-2.0"
+dependencies = [
+    "envship-contracts",
+    "envship-sdk",
+    "envship-core",
+    "envship-predictors",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+envship-contracts = { workspace = true }
+envship-sdk = { workspace = true }
+envship-core = { workspace = true }
+envship-predictors = { workspace = true }
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "hypothesis>=6.100",
+    "ruff>=0.6",
+    "pyright>=1.1.380",
+    "pre-commit>=3.7",
+]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+extend-exclude = ["web"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.pyright]
+typeCheckingMode = "basic"
+include = ["packages", "tests"]
+pythonVersion = "3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

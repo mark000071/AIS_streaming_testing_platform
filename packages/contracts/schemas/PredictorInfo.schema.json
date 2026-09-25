@@ -1,0 +1,45 @@
+{
+  "properties": {
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "version": {
+      "title": "Version",
+      "type": "string"
+    },
+    "k": {
+      "title": "K",
+      "type": "integer"
+    },
+    "description": {
+      "default": "",
+      "title": "Description",
+      "type": "string"
+    },
+    "required_tags": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Required Tags",
+      "type": "array"
+    },
+    "cpu": {
+      "default": 1.0,
+      "title": "Cpu",
+      "type": "number"
+    },
+    "mem_mb": {
+      "default": 512,
+      "title": "Mem Mb",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "version",
+    "k"
+  ],
+  "title": "PredictorInfo",
+  "type": "object"
+}

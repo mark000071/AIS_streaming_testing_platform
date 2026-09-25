@@ -1,0 +1,99 @@
+{
+  "description": "One AIS position report as published on ``ais.raw.{feed}``.",
+  "properties": {
+    "mmsi": {
+      "title": "Mmsi",
+      "type": "integer"
+    },
+    "feed": {
+      "title": "Feed",
+      "type": "string"
+    },
+    "recv_ts": {
+      "description": "receiver/feed timestamp (event time)",
+      "title": "Recv Ts",
+      "type": "number"
+    },
+    "ingest_wall": {
+      "description": "wall clock when ingest published it",
+      "title": "Ingest Wall",
+      "type": "number"
+    },
+    "lat": {
+      "title": "Lat",
+      "type": "number"
+    },
+    "lon": {
+      "title": "Lon",
+      "type": "number"
+    },
+    "sog": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sog"
+    },
+    "cog": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cog"
+    },
+    "heading": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Heading"
+    },
+    "nav_status": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Nav Status"
+    },
+    "ais_class": {
+      "default": "A",
+      "title": "Ais Class",
+      "type": "string"
+    },
+    "replay": {
+      "default": false,
+      "title": "Replay",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "mmsi",
+    "feed",
+    "recv_ts",
+    "ingest_wall",
+    "lat",
+    "lon"
+  ],
+  "title": "RawPosition",
+  "type": "object"
+}

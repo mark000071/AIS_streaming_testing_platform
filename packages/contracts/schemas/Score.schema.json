@@ -1,0 +1,144 @@
+{
+  "description": "Per-(window, predictor) verdict emitted by reconcile on ``scores``.",
+  "properties": {
+    "window_id": {
+      "title": "Window Id",
+      "type": "string"
+    },
+    "predictor_id": {
+      "title": "Predictor Id",
+      "type": "string"
+    },
+    "mmsi": {
+      "title": "Mmsi",
+      "type": "integer"
+    },
+    "feed": {
+      "title": "Feed",
+      "type": "string"
+    },
+    "anchor_ts": {
+      "title": "Anchor Ts",
+      "type": "number"
+    },
+    "scored_wall": {
+      "title": "Scored Wall",
+      "type": "number"
+    },
+    "miss": {
+      "title": "Miss",
+      "type": "boolean"
+    },
+    "served_ade": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Served Ade"
+    },
+    "served_fde": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Served Fde"
+    },
+    "oracle_ade": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Oracle Ade"
+    },
+    "per_horizon": {
+      "anyOf": [
+        {
+          "description": "float32 array of shape (30,); Arrow IPC list<float32> column on the wire",
+          "type": "array",
+          "x-dtype": "float32",
+          "x-shape": "(30,)"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Per Horizon"
+    },
+    "k": {
+      "default": 0,
+      "title": "K",
+      "type": "integer"
+    },
+    "comparable": {
+      "default": false,
+      "title": "Comparable",
+      "type": "boolean"
+    },
+    "coverage": {
+      "default": 0.0,
+      "title": "Coverage",
+      "type": "number"
+    },
+    "scene": {
+      "default": "straight",
+      "title": "Scene",
+      "type": "string"
+    },
+    "speed_band": {
+      "default": "slow",
+      "title": "Speed Band",
+      "type": "string"
+    },
+    "queue_ms": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Queue Ms"
+    },
+    "compute_ms": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Compute Ms"
+    }
+  },
+  "required": [
+    "window_id",
+    "predictor_id",
+    "mmsi",
+    "feed",
+    "anchor_ts",
+    "scored_wall",
+    "miss"
+  ],
+  "title": "Score",
+  "type": "object"
+}

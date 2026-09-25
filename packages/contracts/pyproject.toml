@@ -1,0 +1,18 @@
+[project]
+name = "envship-contracts"
+version = "0.1.0"
+description = "Frozen interface contracts: stream topics, message models, wire codec, parquet schemas"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.7",
+    "numpy>=1.26",
+    "msgpack>=1.0",
+    "pyarrow>=16",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/envship_contracts"]

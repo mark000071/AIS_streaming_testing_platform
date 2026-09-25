@@ -1,0 +1,55 @@
+{
+  "description": "Realized future for a window (``truth.realized``), published once the horizon has passed.",
+  "properties": {
+    "window_id": {
+      "title": "Window Id",
+      "type": "string"
+    },
+    "mmsi": {
+      "title": "Mmsi",
+      "type": "integer"
+    },
+    "feed": {
+      "title": "Feed",
+      "type": "string"
+    },
+    "anchor_ts": {
+      "title": "Anchor Ts",
+      "type": "number"
+    },
+    "future_xy": {
+      "description": "displacement (east, north) in metres; NaN where invalid",
+      "title": "Future Xy",
+      "type": "array",
+      "x-dtype": "float32",
+      "x-shape": "(30, 2)"
+    },
+    "valid": {
+      "description": "bool array of shape (30,); Arrow IPC list<bool> column on the wire",
+      "title": "Valid",
+      "type": "array",
+      "x-dtype": "bool",
+      "x-shape": "(30,)"
+    },
+    "coverage": {
+      "title": "Coverage",
+      "type": "number"
+    },
+    "fill_method": {
+      "default": "linear",
+      "title": "Fill Method",
+      "type": "string"
+    }
+  },
+  "required": [
+    "window_id",
+    "mmsi",
+    "feed",
+    "anchor_ts",
+    "future_xy",
+    "valid",
+    "coverage"
+  ],
+  "title": "Truth",
+  "type": "object"
+}

@@ -1,0 +1,77 @@
+{
+  "description": "K candidate futures from one predictor for one window (``predictions.{id}``).",
+  "properties": {
+    "window_id": {
+      "title": "Window Id",
+      "type": "string"
+    },
+    "predictor_id": {
+      "default": "",
+      "title": "Predictor Id",
+      "type": "string"
+    },
+    "model_revision": {
+      "default": "",
+      "title": "Model Revision",
+      "type": "string"
+    },
+    "mmsi": {
+      "default": 0,
+      "title": "Mmsi",
+      "type": "integer"
+    },
+    "anchor_ts": {
+      "default": 0.0,
+      "title": "Anchor Ts",
+      "type": "number"
+    },
+    "enqueue_wall": {
+      "default": 0.0,
+      "title": "Enqueue Wall",
+      "type": "number"
+    },
+    "issue_wall": {
+      "default": 0.0,
+      "title": "Issue Wall",
+      "type": "number"
+    },
+    "paths": {
+      "description": "displacement (east, north) in metres from the anchor",
+      "title": "Paths",
+      "type": "array",
+      "x-dtype": "float32",
+      "x-shape": "(K, 30, 2)"
+    },
+    "scores": {
+      "anyOf": [
+        {
+          "description": "float32 array of shape (K,); Arrow IPC list<float32> column on the wire",
+          "type": "array",
+          "x-dtype": "float32",
+          "x-shape": "(K,)"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Scores"
+    },
+    "selected": {
+      "default": 0,
+      "title": "Selected",
+      "type": "integer"
+    },
+    "compute_ms": {
+      "default": 0.0,
+      "title": "Compute Ms",
+      "type": "number"
+    }
+  },
+  "required": [
+    "window_id",
+    "paths"
+  ],
+  "title": "Candidates",
+  "type": "object"
+}
