@@ -84,19 +84,38 @@ replay 模式下事件时间是 20× 的：真值在锚点后 10 分钟事件时
 | **GitHub Actions** | ✅ | lint → pyright → parity → pytest → 前端构建 → 镜像构建（未推 GHCR） |
 | Digitraffic **MQTT push** | ✅ | 另有 REST 轮询兜底（`fi_mode: rest`） |
 
-**Demo 中尚未包含**（需要路线图里提到的外部资源或后续泳道）：Kystdatahuset 挪威 feed、OSM 环境栅格 tile（`tile_id` 目前为 `none`，`geom` 为零向量）、MCM-Net / routed 预测器（私有模型）、HF / Zenodo 发布、Loki / Alertmanager / restic 备份、Protomaps 自托管底图、GHCR 推送与外部提交 CI 流程。
+**Demo 中尚未包含**（需要路线图里提到的外部资源或后续泳道）：Kystdatahuset 挪威 feed、平台自身窗口里的 OSM 环境栅格（`tile_id` 目前为 `none`，`geom` 为零向量；MCM-Net 预测器自带环境瓦片，见下节）、MCM-Net 的 `routed` 部署规则预测器、HF / Zenodo 发布、Loki / Alertmanager / restic 备份、Protomaps 自托管底图、GHCR 推送与外部提交 CI 流程。
 
 ## 与模型端（MCM_streaming）的结合
 
-模型端是独立仓库 [`MCM_streaming`](https://github.com/mark000071/MCM_streaming)（MCM-Net 训练、部署服务、论文），本仓库不修改、不复制其代码。两端的结合分两步：
+模型端是独立仓库 [`MCM_streaming`](https://github.com/mark000071/MCM_streaming)（MCM-Net 训练、部署服务、论文），本仓库不修改、不复制其代码。
 
-1. **目标形态（路线图泳道 B，待做）**：把 MCM-Net 从 MCM_streaming 的 predict worker 拆成本平台的一个预测器容器（外加 scorer + mode-router 组成的 `routed` 预测器），和 cv / kalman / imm 一起由同一个 reconcile 打分、上同一张榜。前置条件：权重（HF 私有仓）、OSM 环境栅格 tile（目前 `tile_id=none`），以及 MCM-Net 需要的 11 维特征与本平台 `Window.tokens` 的对齐。
-2. **过渡方案（已可用）**：`backend/` + `frontend/` 是一个只读查看器，直接读取一套正在运行的 MCM_streaming 部署产出的预测（`predictions/*.parquet`）和对账分数（`metrics.sqlite`），展示 served 规则 vs CV/Kalman 以及 MCM-Net 自身的边际贡献；没有真实部署时用内置的合成数据演示。启动：`./scripts/run_demo.sh`（默认 :8090，与本平台的 :8000 / docker 的 :8080 不冲突）。
+### MCM-Net 预测器（`mcmnet`）
+
+MCM-Net 作为平台的第五个预测器，和 cv / kalman / imm 用同一批窗口、同一个 reconcile 裁判打分，上同一张排行榜。它运行的是 Hugging Face 私有仓 `mark000071/MCM_streaming` 里部署用的 `weights/combined` 模型（记忆库 189,891 条），每个窗口给出 20 条候选，主预测取第一条（与 MCM 部署时的 top-1 规则一致）。
+
+输入与训练完全一致：模型、特征构造和环境栅格化代码都直接调用 MCM_streaming 仓库里的原始实现（`model/models/model_test_trajectory_res.py`、`serving/aisstream/features/`、`serving/aisstream/envtiles/`），只读、不修改。平台窗口里 30 个网格点的经纬度用 MCM 自己的投影公式重新换算；船型暂时一律按 `unknown`（平台还没有接入 AIS 静态报文）；环境输入来自按 MCM 流程从 OSM 生成的瓦片，瓦片覆盖不到的位置按训练时"缺失环境"的约定输入全零，并在该预测的 `model_revision` 上标记 `+no-env`。
+
+```bash
+HF_TOKEN=hf_...  scripts/setup_mcmnet.sh        # 克隆 MCM_streaming、下载权重、装 torch、生成芬兰 OSM 瓦片
+eval "$(scripts/setup_mcmnet.sh --print-env)"   # 设置 MCM_ROOT / MCM_WEIGHTS / MCM_TILES / MCM_DEVICE
+uv run envship dev --fresh --speed 5            # 设置了上述变量就会自动启动 mcmnet（--no-mcmnet 可关闭）
+uv run envship benchmark --predictors cv,kalman,imm,mcmnet   # 离线同条件对比，不受实时速度影响
+```
+
+- **令牌**：`HF_TOKEN` 只从环境变量读取，不要写进代码或提交。Colab 里建议放在"密钥"（Secrets）里。
+- **速度**：CPU 上每个窗口约 0.3–0.8 s，20× 回放产生窗口的速度（约每秒 6 个）超过单进程 CPU 的处理能力，过期的窗口会被跳过、计入缺失。CPU 上用 `--speed 5` 左右或 `--mcmnet-replicas N`；有 GPU 时 `MCM_DEVICE=cuda`（脚本会自动检测）。
+- **`uv sync` 会移除 torch**：torch / scipy / osmium 不在工作区锁文件里（CPU 和 GPU 版本来源不同），`uv run` 会保留它们，但单独执行 `uv sync` 后需要重新运行 `scripts/setup_mcmnet.sh`。
+- **离线评测** `envship benchmark`：把回放数据完整跑一遍 tracker，所有预测器对同一批窗口同步作答再统一打分，按全部 / 直航 / 转向分层输出误差，适合公平比较；实时覆盖率和延迟仍以在线排行榜为准。
+
+### 过渡方案：MCM_streaming 部署的只读查看器
+
+`backend/` + `frontend/` 是一个只读查看器，直接读取一套正在运行的 MCM_streaming 部署产出的预测（`predictions/*.parquet`）和对账分数（`metrics.sqlite`），展示 served 规则 vs CV/Kalman 以及 MCM-Net 自身的边际贡献；没有真实部署时用内置的合成数据演示。启动：`./scripts/run_demo.sh`（默认 :8090，与本平台的 :8000 / docker 的 :8080 不冲突）。
 
 | 文档 | 内容 |
 | --- | --- |
 | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | 部署配置要求：环境、硬件、模型推理参数，以及为什么推理不用 GPU |
-| [`docs/DATA_CONTRACT.md`](docs/DATA_CONTRACT.md) | MCM_streaming 输出的 JSON / parquet / SQLite 字段契约（查看器与未来 MCM-Net 预测器的依据） |
+| [`docs/DATA_CONTRACT.md`](docs/DATA_CONTRACT.md) | MCM_streaming 部署输出的 JSON / parquet / SQLite 字段契约（查看器的依据） |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 查看器与模型端的边界设计 |
 
 ## 目录结构
@@ -105,7 +124,7 @@ replay 模式下事件时间是 20× 的：真值在锚点后 10 分钟事件时
 packages/
   contracts/   主题名、消息模型、wire codec（msgpack + Arrow）、parquet schema、JSON Schema
   sdk/         Predictor Protocol、run_predictor 容器 runner、进程内 predict_all、examples/minimal.py
-  predictors/  内置基线：cv、kalman（K=3）、imm（CV + 左/右协调转弯，K=3）
+  predictors/  内置基线：cv、kalman（K=3）、imm（CV + 左/右协调转弯，K=3）；mcmnet（MCM-Net，K=20，需另行准备，见上文）
   core/        ingest_fi、replay、tracker(+features)、reconcile、jobs、api、devstack、cli
 web/           React 前端
 docker/        Dockerfile、web.Dockerfile、Caddyfile、prometheus/grafana 配置
