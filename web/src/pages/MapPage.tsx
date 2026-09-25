@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import maplibregl, { type StyleSpecification } from "maplibre-gl";
 import { MapboxOverlay } from "@deck.gl/mapbox";
-import { PathLayer, ScatterplotLayer } from "@deck.gl/layers";
+import { IconLayer, PathLayer, ScatterplotLayer } from "@deck.gl/layers";
 import type { Layer, PickingInfo } from "@deck.gl/core";
 import {
   fmtM,
@@ -21,6 +21,9 @@ const SEAMARK = "https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png";
 const HORIZON_S = 600;
 const TRUTH_GRACE_S = 60;
 const MIN_TRUTH_COVERAGE = 0.5;
+const KN_TO_MS = 0.514444;
+const HEADING_LOOKAHEAD_S = 300; // COG/SOG arrow length for ships without a forecast
+const MIN_MOVING_KN = 0.5;
 
 interface Verdict {
   window_id: string;
@@ -57,6 +60,58 @@ function addSeamarks(map: maplibregl.Map, visible: boolean) {
 
 const valid = (p: (LonLat | [null, null])[]): LonLat[] => p.filter((q): q is LonLat => q[0] != null && q[1] != null);
 
+/** Bearing in degrees clockwise from north, on a local equirectangular approximation. */
+function bearing(a: LonLat, b: LonLat): number {
+  const k = Math.cos((a[1] * Math.PI) / 180);
+  return (Math.atan2((b[0] - a[0]) * k, b[1] - a[1]) * 180) / Math.PI;
+}
+
+/** Point `dist_m` metres from `p` along `bearingDeg`. */
+function project(p: LonLat, bearingDeg: number, dist_m: number): LonLat {
+  const r = (bearingDeg * Math.PI) / 180;
+  const dLat = (dist_m * Math.cos(r)) / 111_320;
+  const dLon = (dist_m * Math.sin(r)) / (111_320 * Math.cos((p[1] * Math.PI) / 180));
+  return [p[0] + dLon, p[1] + dLat];
+}
+
+interface Arrow {
+  at: LonLat;
+  bearing: number;
+  color: number[];
+}
+
+/** Arrowhead at the end of a path, oriented along its last non-degenerate segment. */
+function arrowAtEnd(path: LonLat[], color: number[]): Arrow | null {
+  const end = path[path.length - 1];
+  for (let i = path.length - 2; i >= 0; i--) {
+    const p = path[i];
+    if (Math.abs(p[0] - end[0]) + Math.abs(p[1] - end[1]) > 1e-7) return { at: end, bearing: bearing(p, end), color };
+  }
+  return null;
+}
+
+let arrowUrl: string | null = null;
+/** Arrowhead icon (pointing up = north), drawn once and handed to deck.gl as a PNG data URL. */
+function arrowAtlas(): string {
+  if (arrowUrl) return arrowUrl;
+  const c = document.createElement("canvas");
+  c.width = c.height = 64;
+  const g = c.getContext("2d");
+  if (g) {
+    g.fillStyle = "#fff";
+    g.beginPath();
+    g.moveTo(32, 2);
+    g.lineTo(60, 60);
+    g.lineTo(32, 44);
+    g.lineTo(4, 60);
+    g.closePath();
+    g.fill();
+  }
+  arrowUrl = c.toDataURL("image/png");
+  return arrowUrl;
+}
+const ARROW_MAPPING = { arrow: { x: 0, y: 0, width: 64, height: 64, anchorY: 32, mask: true } };
+
 export default function MapPage({ dark }: { dark: boolean }) {
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -72,6 +127,10 @@ export default function MapPage({ dark }: { dark: boolean }) {
   const [detail, setDetail] = useState<VesselDetail | null>(null);
   const [windowId, setWindowId] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
+  // follow the vessel's newest forecast unless the user picked a specific window
+  const pinned = useRef(false);
+  // re-fit the map only after a user action, not on every auto-advance to a new window
+  const fitNext = useRef(false);
   const [showAllK, setShowAllK] = useState(true);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [verdicts, setVerdicts] = useState<Verdict[]>([]);
@@ -175,9 +234,13 @@ export default function MapPage({ dark }: { dark: boolean }) {
       .then((d) => {
         if (cancelled) return;
         setDetail(d);
+        // the newest window only counts as the ship's current forecast if its anchor is recent; after a
+        // reporting gap (or a replay loop restart) it can be far older than the ship's position
+        const latest = d.windows[0];
+        const current = latest && (!d.vessel || d.vessel.ts - latest.anchor_ts <= HORIZON_S) ? latest : null;
         setWindowId((cur) => {
-          if (cur && d.windows.some((w) => w.window_id === cur)) return cur;
-          return (d.windows.find((w) => w.truth) ?? d.windows[0])?.window_id ?? null;
+          if (pinned.current && cur && d.windows.some((w) => w.window_id === cur)) return cur;
+          return current?.window_id ?? null;
         });
       })
       .catch(() => !cancelled && setDetail(null));
@@ -186,7 +249,21 @@ export default function MapPage({ dark }: { dark: boolean }) {
     };
   }, [selected, refresh]);
 
+  const selectVessel = (mmsi: number) => {
+    pinned.current = false;
+    fitNext.current = true;
+    setSelected(mmsi);
+  };
+
+  const pickWindow = (wid: string) => {
+    pinned.current = true;
+    fitNext.current = true;
+    setWindowId(wid);
+  };
+
   const openWindow = async (wid: string, mmsi: number) => {
+    pinned.current = true;
+    fitNext.current = true;
     setSelected(mmsi);
     setWindowId(wid);
     try {
@@ -208,20 +285,34 @@ export default function MapPage({ dark }: { dark: boolean }) {
     return [...ids].sort();
   }, [win, verdicts]);
 
-  // fit the selected window into view
-  const fitted = useRef<string | null>(null);
+  // fit the selection into view after a user action (vessel click, window chip, verdict row)
+  const track = useMemo<LonLat[][]>(
+    () => (detail && (detail.vessel?.mmsi ?? detail.windows[0]?.mmsi) === selected ? (detail.track ?? []) : []),
+    [detail, selected],
+  );
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !win || fitted.current === win.window_id) return;
-    fitted.current = win.window_id;
-    const pts: LonLat[] = [...win.history, ...(win.truth ? valid(win.truth.path) : [])];
-    Object.values(win.candidates).forEach((c) => c.paths.forEach((p) => pts.push(...valid(p))));
+    if (!map || !fitNext.current || selected == null) return;
+    const mine = detail && (detail.vessel?.mmsi ?? detail.windows[0]?.mmsi) === selected;
+    if (!mine) return;
+    const pts: LonLat[] = track.flat();
+    if (win) {
+      pts.push(...win.history, ...(win.truth ? valid(win.truth.path) : []));
+      Object.values(win.candidates).forEach((c) => c.paths.forEach((p) => pts.push(...valid(p))));
+    }
+    const v = detail?.vessel;
+    if (v) {
+      pts.push([v.lon, v.lat]);
+      if (!win && v.sog != null && v.cog != null && v.sog >= MIN_MOVING_KN)
+        pts.push(project([v.lon, v.lat], v.cog, v.sog * KN_TO_MS * HEADING_LOOKAHEAD_S));
+    }
     if (!pts.length) return;
+    fitNext.current = false;
     const b = new maplibregl.LngLatBounds(pts[0], pts[0]);
     pts.forEach((p) => b.extend(p));
     const wide = window.innerWidth > 760;
     map.fitBounds(b, { padding: { top: 60, bottom: wide ? 60 : 280, left: wide ? 420 : 40, right: 60 }, maxZoom: 13, duration: 700 });
-  }, [win, mapReady]);
+  }, [win, detail, selected, track, mapReady]);
 
   // ---- deck.gl layers ------------------------------------------------------------------------------------------------
   useEffect(() => {
@@ -245,10 +336,43 @@ export default function MapPage({ dark }: { dark: boolean }) {
         getLineColor: [...surface, 255],
         getFillColor: (d) => (d[0] === selected ? [...primary, 255] : d[6] ? [...secondary, 220] : [...muted, 150]),
         pickable: true,
-        onClick: (info: PickingInfo<VesselRow>) => info.object && setSelected(info.object[0]),
+        onClick: (info: PickingInfo<VesselRow>) => info.object && selectVessel(info.object[0]),
         updateTriggers: { getFillColor: [selected, dark], getRadius: [selected], getLineWidth: [selected] },
       }),
     ];
+    const arrows: Arrow[] = [];
+    const segments = track.filter((seg) => seg.length > 1);
+    if (segments.length) {
+      layers.push(
+        new PathLayer({
+          id: "track",
+          data: segments.map((path) => ({ path })),
+          getPath: (d: { path: LonLat[] }) => d.path,
+          getColor: [...muted, 170],
+          getWidth: 1.5,
+          widthUnits: "pixels",
+          capRounded: true,
+          jointRounded: true,
+        }),
+      );
+    }
+    const selRow = selected != null ? vessels.current.get(selected) : undefined;
+    if (!win && selRow && selRow[3] != null && selRow[4] != null && selRow[3] >= MIN_MOVING_KN) {
+      const pos: LonLat = [selRow[1], selRow[2]];
+      const ahead = project(pos, selRow[4], selRow[3] * KN_TO_MS * HEADING_LOOKAHEAD_S);
+      layers.push(
+        new PathLayer({
+          id: "heading",
+          data: [{ path: [pos, ahead] }],
+          getPath: (d: { path: LonLat[] }) => d.path,
+          getColor: [...primary, 200],
+          getWidth: 2,
+          widthUnits: "pixels",
+          capRounded: true,
+        }),
+      );
+      arrows.push({ at: ahead, bearing: selRow[4], color: [...primary, 230] });
+    }
     if (win) {
       layers.push(
         new PathLayer({
@@ -297,6 +421,10 @@ export default function MapPage({ dark }: { dark: boolean }) {
           lineWidthUnits: "pixels",
         }),
       );
+      cand.filter((c) => c.width > 2).forEach((c) => {
+        const a = arrowAtEnd(c.path, c.color);
+        if (a) arrows.push(a);
+      });
       if (win.truth) {
         const tp = [win.anchor, ...valid(win.truth.path)];
         layers.push(
@@ -339,6 +467,23 @@ export default function MapPage({ dark }: { dark: boolean }) {
         }),
       );
     }
+    if (arrows.length) {
+      layers.push(
+        new IconLayer<Arrow>({
+          id: "arrows",
+          data: arrows,
+          iconAtlas: arrowAtlas(),
+          iconMapping: ARROW_MAPPING,
+          getIcon: () => "arrow",
+          getPosition: (d) => d.at,
+          getAngle: (d) => -d.bearing,
+          getColor: (d) => d.color as [number, number, number, number],
+          getSize: 14,
+          sizeUnits: "pixels",
+          billboard: false,
+        }),
+      );
+    }
     ov.setProps({
       layers,
       getTooltip: ({ object, layer }: PickingInfo) =>
@@ -349,7 +494,7 @@ export default function MapPage({ dark }: { dark: boolean }) {
             }
           : null,
     });
-  }, [ver, win, selected, showAllK, hidden, dark, t.primary, t.secondary, t.muted, t.surface]);
+  }, [ver, win, track, selected, showAllK, hidden, dark, t.primary, t.secondary, t.muted, t.surface]);
 
   const feedClock = clock.fi ?? clock.no;
 
@@ -380,7 +525,7 @@ export default function MapPage({ dark }: { dark: boolean }) {
             detail={detail}
             win={win}
             windowId={windowId}
-            setWindowId={setWindowId}
+            setWindowId={pickWindow}
             clock={feedClock}
             dark={dark}
             showAllK={showAllK}
@@ -390,7 +535,7 @@ export default function MapPage({ dark }: { dark: boolean }) {
             onClose={() => {
               setSelected(null);
               setWindowId(null);
-              fitted.current = null;
+              pinned.current = false;
             }}
           />
         ) : (
@@ -447,7 +592,10 @@ function Legend({ ids, dark }: { ids: string[]; dark: boolean }) {
   return (
     <div className="legend">
       <span className="legend-item">
-        <span className="line" style={{ background: t.muted }} /> history (10 min)
+        <span className="line" style={{ background: t.muted, opacity: 0.65 }} /> track (30 min)
+      </span>
+      <span className="legend-item">
+        <span className="line" style={{ background: t.muted }} /> model input (10 min)
       </span>
       <span className="legend-item">
         <span className="line thick" style={{ background: t.primary }} /> truth
@@ -498,10 +646,21 @@ function VesselPanel(props: {
           {v.sog ?? "–"} kn · COG {v.cog ?? "–"}° · last report {fmtTime(v.ts)}
         </p>
       )}
-      {!detail?.windows.length && (
+      {!win && (
         <p className="muted small">
-          No eligible window yet. A ship needs 10 minutes of continuous, moving history; windows are issued every 5 minutes of
-          event time.
+          {detail?.windows.length
+            ? `No current forecast: its newest window (${fmtTime(detail.windows[0].anchor_ts).slice(0, 5)}) is more than 10 minutes older than its last report. Pick a window below to see that older forecast. `
+            : "No forecast for this ship yet: it needs 10 minutes of continuous, moving history, and windows are issued every 5 minutes of event time. "}
+          The line shows its reported track.{" "}
+          {v && v.sog != null && v.cog != null && v.sog >= MIN_MOVING_KN
+            ? "The arrow is its course over ground extrapolated 5 minutes at current speed (not a model forecast)."
+            : "Its speed or course is unknown or it is not moving, so there is no heading arrow."}
+        </p>
+      )}
+      {win && (
+        <p className="muted small">
+          Selecting a ship shows its newest forecast and follows new windows as they arrive. Pick an earlier window below to
+          pin it and compare that forecast with what the ship actually did.
         </p>
       )}
       {detail && detail.windows.length > 0 && (

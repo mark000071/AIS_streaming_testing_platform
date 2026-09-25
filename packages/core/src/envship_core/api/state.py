@@ -16,6 +16,14 @@ log = logging.getLogger("envship.api.state")
 
 MAX_WINDOWS = 20_000
 VESSEL_TTL_S = 1800.0
+# per-vessel reported track shown when a ship is selected: 30 min, thinned to one point per 10 s
+TRACK_S = 1800.0
+TRACK_MIN_DT_S = 10.0
+TRACK_MAX_POINTS = int(TRACK_S / TRACK_MIN_DT_S)
+# the track is split into segments instead of drawing a straight line across a reporting gap longer than
+# TRACK_MAX_GAP_S or a jump faster than TRACK_MAX_JUMP_MS (replay loop restart, GPS glitch, spoofing)
+TRACK_MAX_GAP_S = 600.0
+TRACK_MAX_JUMP_MS = 50 * 0.514444
 
 
 def _latlon(xy: np.ndarray, lat0: float, lon0: float) -> list:
@@ -37,6 +45,10 @@ class LiveState:
         self.seq = 0
         self.vessels: dict[int, dict] = {}
         self.vessel_seq: dict[int, int] = {}
+        # thinned track (points >= TRACK_MIN_DT_S apart) plus the newest report, kept separately so that
+        # a vessel reporting faster than the thinning interval still accumulates points
+        self.tracks: dict[int, deque[tuple[float, float, float, bool]]] = {}  # (lon, lat, ts, starts_segment)
+        self.track_head: dict[int, tuple[float, float, float]] = {}
         self.removed: deque[tuple[int, int]] = deque(maxlen=20_000)
         self.windows: OrderedDict[str, dict] = OrderedDict()
         self.vessel_windows: dict[int, deque[str]] = {}
@@ -99,12 +111,14 @@ class LiveState:
                 "feed": p.feed,
                 "lat": p.lat,
                 "lon": p.lon,
-                "sog": p.sog,
-                "cog": p.cog,
+                # AIS "not available" sentinels (SOG 102.3, COG 360), same rule as the tracker
+                "sog": p.sog if p.sog is not None and p.sog < 102.2 else None,
+                "cog": p.cog if p.cog is not None and 0.0 <= p.cog < 360.0 else None,
                 "ts": p.recv_ts,
                 "wid": self.vessels.get(p.mmsi, {}).get("wid"),
             }
             self.vessel_seq[p.mmsi] = self._bump()
+            self._record_track(p.mmsi, p.lon, p.lat, p.recv_ts)
             self.clock[p.feed] = max(self.clock.get(p.feed, 0.0), p.recv_ts)
             self.stats["raw"] += 1
         elif topic == streams.WINDOWS:
@@ -183,6 +197,23 @@ class LiveState:
             h = decode(fields, HealthBeat)
             self.health[f"{h.service}@{h.instance}"] = h.model_dump(mode="json")
 
+    def _record_track(self, mmsi: int, lon: float, lat: float, ts: float) -> None:
+        head = self.track_head.get(mmsi)
+        if head is not None and ts < head[2]:
+            return  # out-of-order report
+        tr = self.tracks.setdefault(mmsi, deque(maxlen=TRACK_MAX_POINTS))
+        brk = False
+        if head is not None:
+            dt = ts - head[2]
+            k = np.cos(np.radians(lat))
+            dist_m = 111_320.0 * float(np.hypot((lon - head[0]) * k, lat - head[1]))
+            brk = dt > TRACK_MAX_GAP_S or dist_m > TRACK_MAX_JUMP_MS * max(dt, 1.0)
+            if brk and tr[-1][:3] != head:
+                tr.append((*head, False))  # close the previous segment at its last report
+        self.track_head[mmsi] = (lon, lat, ts)
+        if brk or not tr or ts - tr[-1][2] >= TRACK_MIN_DT_S:
+            tr.append((lon, lat, ts, brk))
+
     def _expire(self) -> None:
         with self.lock:
             clock = max(self.clock.values(), default=0.0)
@@ -190,6 +221,8 @@ class LiveState:
             for m in dead:
                 del self.vessels[m]
                 self.vessel_seq.pop(m, None)
+                self.tracks.pop(m, None)
+                self.track_head.pop(m, None)
                 self.removed.append((self._bump(), m))
             now = time.time()
             for k in [k for k, h in self.health.items() if now - h["ts"] > 60]:
@@ -237,4 +270,16 @@ class LiveState:
         windows = [self.windows[w] for w in reversed(wids) if w in self.windows]
         if v is None and not windows:
             return None
-        return {"vessel": v, "windows": windows}
+        pts = list(self.tracks.get(mmsi, ()))
+        head = self.track_head.get(mmsi)
+        if head is not None and (not pts or pts[-1][:3] != head):
+            pts.append((*head, False))
+        since = pts[-1][2] - TRACK_S if pts else 0.0
+        track: list[list[list[float]]] = []
+        for lon, lat, ts, starts in pts:
+            if ts < since:
+                continue
+            if starts or not track:
+                track.append([])
+            track[-1].append([round(lon, 6), round(lat, 6)])
+        return {"vessel": v, "windows": windows, "track": track}

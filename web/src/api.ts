@@ -58,6 +58,8 @@ export interface WindowDetail {
 export interface VesselDetail {
   vessel: { mmsi: number; feed: string; lat: number; lon: number; sog: number | null; cog: number | null; ts: number } | null;
   windows: WindowDetail[];
+  /** reported positions over the last 30 min, oldest first, split into segments at long gaps and jumps */
+  track?: LonLat[][];
 }
 
 export interface LeaderRow {
