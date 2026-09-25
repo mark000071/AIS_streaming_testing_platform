@@ -1,0 +1,4 @@
+# Bridge mode only: reads MCM_streaming's collected predictions/*.parquet.
+# Demo mode and the queue/metrics.sqlite readers need nothing beyond requirements.txt.
+-r requirements.txt
+pyarrow==25.0.1

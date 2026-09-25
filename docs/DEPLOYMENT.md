@@ -22,9 +22,10 @@ figures are cited from `MCM_streaming`, not re-derived here.
 
 - Python **3.11+** (developed/tested here on 3.11.15).
 - Dependencies pinned in `backend/requirements.txt` (FastAPI, Uvicorn,
-  Pydantic — no ML libraries; `pandas`/`pyarrow` are intentionally **not**
-  required because bridge mode reads the live queue JSON + `metrics.sqlite`
-  directly with the standard library).
+  Pydantic — no ML libraries). Bridge mode additionally needs `pyarrow`
+  (`backend/requirements-bridge.txt`) to read the model side's collected
+  `predictions/*.parquet`; `metrics.sqlite` and the queue JSON are read with
+  the standard library. The Docker image installs the bridge set.
 - A modern evergreen browser for the frontend (Leaflet 1.9.4, vendored
   under `frontend/static/vendor/`, no CDN dependency — see §5 for why that
   matters for hardware/network-constrained deployments).
@@ -73,10 +74,10 @@ latency** and a **120 s freshness SLA met on 99.7%** of forecasts over a
 
 - CPU-only is sufficient for production serving — no GPU required on the
   `predict` worker host.
-- `mcmnet_wrapper.py` calls `torch.set_num_threads(num_threads)`
-  (`config.model` doesn't set this explicitly today — default is
-  `torch`'s own heuristic; pin it explicitly, e.g. 4, on a shared host to
-  avoid the predict worker starving `ingest`/`reconcile`).
+- `mcmnet_wrapper.py` calls `torch.set_num_threads(num_threads)` with the
+  constructor default of 4; `load_from_config` does not pass a value, so
+  the predict worker always uses 4 intra-op threads. Budget 4 cores for it
+  on a shared host, or it will compete with `ingest`/`reconcile`.
 - `reconcile` streams parquet via `iter_batches` specifically to keep peak
   RSS **< 0.3 GB** even on multi-GB daily archives — don't provision for
   loading full days into memory.
@@ -92,8 +93,8 @@ machine:
 
 | Resource | Minimum |
 |---|---|
-| CPU | 4 cores (1–2 for the predict worker at `num_threads=4`, rest for ingest/tracker/reconcile/metrics + this API) |
-| RAM | 8 GB (memory bank + embedding tables + `env_tiles` LRU cache of 64 tiles, per `config/deployment.yaml`'s `env_tiles.lru_tiles`, plus reconcile's bounded streaming) |
+| CPU | 6–8 cores: 4 for the predict worker's torch threads, the rest for ingest/tracker/reconcile/metrics + this API |
+| RAM | 8 GB (estimate, not a measured figure: model + memory bank, the `env_tiles` LRU cache of 64 tiles from `env_tiles.lru_tiles`, reconcile's bounded streaming, and this API) |
 | Disk | Depends on replay window length; hourly zstd-parquet archive + `metrics.sqlite` grow with feed volume — plan retention/rotation for anything beyond a short demo window |
 | GPU | Not required |
 
@@ -112,7 +113,7 @@ renders (candidate count, cadence, latency budget):
 | `scorer.alpha` (deployed) | 0.1 (blend weight of the scored candidate vs. CV) | Shown as the "served rule" polyline |
 | `routing.enabled` + `routing.rule_path` | motion-mode router (straight → Kalman, maneuver → scored blend) | Drives `routed.mode`/`routed.source`, shown in the detail panel |
 | Predict cadence | 1 forecast per vessel per 5 min (`predict/cadence.py`) | Sets the natural `/api/reload` polling cadence — polling faster than this on a real deployment wastes cycles |
-| Predict worker poll interval | `--poll-s` (default 2 s) | Floor on how fresh `bridge` mode's queue tail can be |
+| Predict worker poll interval | `--poll-s` (default 2 s) | Floor on how fresh a forecast `bridge` mode can show |
 | `baselines.kalman.process_noise_accel` / `measurement_noise_m` | 0.05 m/s² / 15.0 m | Only relevant if reproducing the real Kalman baseline exactly; this repo's demo-mode stand-in (`backend/app/demo_data.py::_kalman_like`) is a simplified analogue, clearly labeled as such |
 | Freshness SLA | 120 s, met on 99.7% of forecasts (20.9-day window) | Presentation-side `/api/reload` / auto-refresh cadence should stay well under this to avoid implying staler data than the model side actually produces |
 
@@ -125,9 +126,14 @@ Environment variables read by `backend/app/config.py`:
 | `AIS_DATA_MODE` | auto-detect | Force `demo` or `bridge` |
 | `AIS_DEMO_DATA_DIR` | `demo/data` | Where the bundled dataset lives |
 | `AIS_MODEL_DATA_DIR` | `../MCM_streaming/serving/runtime` (sibling checkout) | Root of the model-side `runtime/` tree in bridge mode |
-| `AIS_HOST` / `AIS_PORT` | `0.0.0.0` / `8080` | Bind address |
-| `AIS_POLL_INTERVAL_S` | `2.0` | Reserved for a future auto-refresh loop; today the frontend refreshes on load + the reload button |
-| `AIS_MAX_VESSELS` | `200` | Caps both the vessel list and how much of the queue/`scores` table is scanned per reload, bounding memory on a busy live feed |
+| `AIS_HOST` / `AIS_PORT` | `0.0.0.0` / `8080` | Bind address, passed to uvicorn by `scripts/run_demo.sh` and `deploy/Dockerfile` |
+| `AIS_MAX_VESSELS` | `200` | Per reload: vessels decoded from the parquet store (newest first), queue files read (5×), `scores` rows read (50×) |
+
+The frontend loads once and refreshes on the "Reload data" button
+(`POST /api/reload`). In bridge mode a reload reads the key columns of the
+newest daily parquet file and then streams its `payload_json` column in
+512-row batches, so late in a busy day it is a multi-second scan of a large
+file; memory stays bounded, but don't wire it to a fast timer.
 
 **Offline / air-gapped deployments**: the frontend vendors Leaflet locally
 (`frontend/static/vendor/leaflet/`) specifically so the only remaining
@@ -146,6 +152,7 @@ uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8080
 # -> http://localhost:8080
 
 # Bridge mode (MCM_streaming/serving already deployed/replaying next to this repo)
+pip install -r backend/requirements-bridge.txt
 AIS_DATA_MODE=bridge \
 AIS_MODEL_DATA_DIR=/path/to/MCM_streaming/serving/runtime \
 uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8080

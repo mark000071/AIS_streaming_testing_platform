@@ -10,12 +10,17 @@ contract; if `MCM_streaming/serving/` ever changes these shapes, this file
 (and `backend/app/data_source.py` / `backend/app/schemas.py`) are what to
 update on this side.
 
-## 1. Live prediction record (`queue/predictions/<job_id>.json`)
+## 1. Prediction record
 
-Written by `MCM_streaming/serving/aisstream/predict/server.py::process_job`,
-one JSON file per forecast, consumed (and deleted) by the collector into
-daily parquet. This repo's bridge mode reads the queue directly for
-near-real-time display, before collection.
+Written by `MCM_streaming/serving/aisstream/predict/server.py::process_job`
+as one JSON file per forecast in `queue/predictions/<job_id>.json`. The
+collector (`predict/collect.py`, run every main-loop tick by `run_live.py`)
+then moves each record into `predictions/YYYY-MM-DD.parquet` (column
+`payload_json`, alongside `job_id`, `mmsi`, `anchor_ts`, …) and deletes the
+JSON. Bridge mode therefore reads **the newest daily parquet file** as its
+primary source (latest forecast per vessel; needs `pyarrow`, see
+`backend/requirements-bridge.txt`) and adds whatever is still sitting in the
+queue. Both carry the same record:
 
 ```jsonc
 {
@@ -69,18 +74,24 @@ realized track lands. The `payload_json` column is what this repo reads
   "cv_ade": 191.3, "cv_fde": …, "kalman_ade": …, "kalman_fde": …,
   "mcmnet_top1_ade": …, "mcmnet_best20_ade": …,
   "routed_ade": …, "routed_fde": …,
-  "delta_ade_routed_minus_cv": -14.6,
-  "delta_ade_routed_minus_kalman": -11.4,
-  "delta_ade_mcmnet_minus_cv": -0.9
+  "routed_cvkal_ade": …, "routed_cvkal_fde": …,
+  "delta_ade_routed_minus_cv": …,
+  "delta_ade_routed_minus_kalman": …,
+  "delta_ade_mcmnet_minus_cv": …
 }
 ```
 
-This is the source for the headline "served rule beats CV/Kalman" numbers
-in the paper and in this platform's metrics panel. Field names here are
-frozen by `scoring.py` on the model side; `backend/app/metrics.py` reads a
-fixed subset (`_DELTA_FIELDS`) and simply skips any that aren't present, so
-partial deployments (e.g. no scorer/router stage) degrade gracefully to a
-latency-only summary.
+The metrics panel averages these per row. Over the paper's 15.5-day window
+the means were −14.6 m (`delta_ade_routed_minus_cv`) and −11.4 m
+(`delta_ade_routed_minus_kalman`); MCM-Net's own marginal contribution,
+−0.9 m, is `routed_ade − routed_cvkal_ade` (same routing decision with CV
+on the maneuver leg), which the panel derives. `delta_ade_mcmnet_minus_cv`
+is the raw first candidate against CV, before scoring/routing.
+
+Field names are frozen by `scoring.py` on the model side;
+`backend/app/metrics.py` (`_DELTAS`) skips any that are absent, so a
+deployment without the scorer/router stages shows fewer rows rather than
+failing, and one with no reconciled rows yet shows a latency-only summary.
 
 ## 3. What this repo guarantees NOT to do
 

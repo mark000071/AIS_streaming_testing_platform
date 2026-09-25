@@ -8,7 +8,7 @@ with the same frontend code.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 from pydantic import BaseModel
 
@@ -35,13 +35,13 @@ class ModelBlock(BaseModel):
 
 class VesselSummary(BaseModel):
     mmsi: int
-    source: str                             # 'digitraffic' | 'kystdatahuset' | 'demo'
+    source: str                             # 'digitraffic' | 'kystdatahuset'
     ship_class: Optional[str] = None
     last_lat: float
     last_lon: float
     last_sog_kn: Optional[float] = None
     last_seen_ts: float
-    has_prediction: bool
+    has_model: bool                         # False when the model side runs baselines only
 
 
 class PredictionDetail(BaseModel):
@@ -56,7 +56,6 @@ class PredictionDetail(BaseModel):
     model: Optional[ModelBlock] = None
     e2e_latency_s: Optional[float] = None
     worker_latency_s: Optional[float] = None
-    raw: Dict[str, Any]                     # untouched source record, for the inspector panel
 
 
 class BaselineDelta(BaseModel):
@@ -69,7 +68,8 @@ class BaselineDelta(BaseModel):
 class MetricsSummary(BaseModel):
     data_mode: str
     model_version: Optional[str]
-    n_predictions: int
+    n_predictions: int                      # forecasts loaded (bridge: latest per vessel + queue)
+    n_scored: int                           # reconciled rows the deltas are averaged over
     n_vessels: int
     served_vs_baselines: List[BaselineDelta]
     median_e2e_latency_s: Optional[float]

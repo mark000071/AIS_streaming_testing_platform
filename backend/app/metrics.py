@@ -21,39 +21,40 @@ def _hyp_block(block: Optional[Dict[str, Any]]) -> Optional[HypothesisBlock]:
     return HypothesisBlock(lat=block["lat"], lon=block["lon"])
 
 
+def _anchor_ts(rec: Dict[str, Any]) -> float:
+    return rec.get("meta", {}).get("anchor_ts") or 0.0
+
+
 def latest_per_vessel(predictions: List[Dict[str, Any]]) -> Dict[int, Dict[str, Any]]:
+    """Newest forecast per MMSI, ignoring records without an anchor position
+    (nothing sensible to draw for them)."""
     latest: Dict[int, Dict[str, Any]] = {}
     for rec in predictions:
         meta = rec.get("meta", {})
         mmsi = meta.get("mmsi")
-        if mmsi is None:
+        if mmsi is None or meta.get("anchor_lat") is None or meta.get("anchor_lon") is None:
             continue
         prev = latest.get(mmsi)
-        if prev is None or meta.get("anchor_ts", 0) >= prev.get("meta", {}).get("anchor_ts", 0):
+        if prev is None or _anchor_ts(rec) >= _anchor_ts(prev):
             latest[mmsi] = rec
     return latest
 
 
 def vessel_summaries(predictions: List[Dict[str, Any]]) -> List[VesselSummary]:
     out = []
-    for mmsi, rec in sorted(latest_per_vessel(predictions).items()):
-        meta = rec.get("meta", {})
-        anchor_lat, anchor_lon = meta.get("anchor_lat"), meta.get("anchor_lon")
-        if anchor_lat is None or anchor_lon is None:
-            hist = rec.get("history")
-            if hist and hist.get("lat"):
-                anchor_lat, anchor_lon = hist["lat"][-1], hist["lon"][-1]
-        if anchor_lat is None or anchor_lon is None:
-            continue
+    # newest first, so the endpoint's max_vessels cap drops stale vessels
+    for mmsi, rec in sorted(latest_per_vessel(predictions).items(),
+                            key=lambda kv: _anchor_ts(kv[1]), reverse=True):
+        meta = rec["meta"]
         out.append(VesselSummary(
             mmsi=mmsi,
             source=meta.get("source", "unknown"),
             ship_class=meta.get("unified_class"),
-            last_lat=anchor_lat,
-            last_lon=anchor_lon,
+            last_lat=meta["anchor_lat"],
+            last_lon=meta["anchor_lon"],
             last_sog_kn=meta.get("anchor_sog_kn"),
-            last_seen_ts=meta.get("anchor_ts", 0.0),
-            has_prediction="mcmnet" in rec or "cv" in rec,
+            last_seen_ts=_anchor_ts(rec),
+            has_model="mcmnet" in rec,
         ))
     return out
 
@@ -64,12 +65,13 @@ def prediction_for_vessel(predictions: List[Dict[str, Any]], mmsi: int) -> Optio
 
 
 def to_detail(rec: Dict[str, Any]) -> PredictionDetail:
-    meta = rec.get("meta", {})
+    meta = rec["meta"]
+    anchor = TrackPoint(lat=meta["anchor_lat"], lon=meta["anchor_lon"])
     hist = rec.get("history")
     if hist and hist.get("lat"):
         history = [TrackPoint(lat=la, lon=lo) for la, lo in zip(hist["lat"], hist["lon"])]
     else:
-        history = [TrackPoint(lat=meta.get("anchor_lat", 0.0), lon=meta.get("anchor_lon", 0.0))]
+        history = [anchor]
 
     model_block = None
     mc = rec.get("mcmnet")
@@ -91,32 +93,45 @@ def to_detail(rec: Dict[str, Any]) -> PredictionDetail:
         mmsi=meta.get("mmsi", 0),
         source=meta.get("source", "unknown"),
         issued_ts=rec.get("issued_ts", 0.0),
-        anchor=TrackPoint(lat=meta.get("anchor_lat", 0.0), lon=meta.get("anchor_lon", 0.0)),
+        anchor=anchor,
         history=history,
         cv=_hyp_block(rec.get("cv")) or HypothesisBlock(lat=[], lon=[]),
         kalman=_hyp_block(rec.get("kalman")) or HypothesisBlock(lat=[], lon=[]),
         model=model_block,
         e2e_latency_s=rec.get("e2e_latency_s"),
         worker_latency_s=rec.get("worker_latency_s"),
-        raw=rec,
     )
 
 
-_DELTA_FIELDS = [
-    ("delta_ade_routed_minus_cv", "Served rule vs. Constant-Velocity",
-     "Mean top-1 ADE delta (m); negative = served rule is closer to ground truth."),
-    ("delta_ade_routed_minus_kalman", "Served rule vs. Kalman",
-     "Mean top-1 ADE delta (m); negative = served rule is closer to ground truth."),
-    ("delta_ade_mcmnet_minus_cv", "MCM-Net top-1 vs. Constant-Velocity",
-     "Isolates the deep model's own candidate before routing/scoring blends it with CV."),
+def _diff(a: str, b: str):
+    def get(row: Dict[str, Any]) -> Optional[float]:
+        if row.get(a) is None or row.get(b) is None:
+            return None
+        return row[a] - row[b]
+    return get
+
+
+# (label, value-of-row, description). The first three are stored as-is by
+# MCM_streaming's reconcile/scoring.py; the marginal one is derived from its
+# routed_ade/routed_cvkal_ade pair, exactly how ROUTING_SCORER_REPORT.md
+# separates routing's contribution from MCM-Net's.
+_DELTAS = [
+    ("Served rule vs. Constant-Velocity", lambda r: r.get("delta_ade_routed_minus_cv"),
+     "Mean ADE delta (m) of the served (routed) trajectory vs. CV; negative = closer to ground truth."),
+    ("Served rule vs. Kalman", lambda r: r.get("delta_ade_routed_minus_kalman"),
+     "Mean ADE delta (m) of the served (routed) trajectory vs. Kalman."),
+    ("MCM-Net marginal (routed vs. CV|Kalman-only routing)", _diff("routed_ade", "routed_cvkal_ade"),
+     "Same routing decision with CV on the maneuver leg instead of MCM-Net: what the deep model itself adds."),
+    ("MCM-Net top-1 alone vs. Constant-Velocity", lambda r: r.get("delta_ade_mcmnet_minus_cv"),
+     "The raw first candidate, before scoring/routing blend it with the baselines."),
 ]
 
 
 def metrics_summary(predictions: List[Dict[str, Any]], scores: List[Dict[str, Any]],
                     data_mode: str) -> MetricsSummary:
     deltas = []
-    for field, label, desc in _DELTA_FIELDS:
-        vals = [s[field] for s in scores if s.get(field) is not None]
+    for label, value, desc in _DELTAS:
+        vals = [v for v in map(value, scores) if v is not None]
         if vals:
             deltas.append(BaselineDelta(label=label, n=len(vals),
                                         mean_delta_m=round(statistics.mean(vals), 2),
@@ -124,15 +139,14 @@ def metrics_summary(predictions: List[Dict[str, Any]], scores: List[Dict[str, An
 
     e2e = [r["e2e_latency_s"] for r in predictions if r.get("e2e_latency_s") is not None]
     mnet = [r["mcmnet_latency_s"] for r in predictions if r.get("mcmnet_latency_s") is not None]
-    model_version = None
-    if predictions:
-        model_version = predictions[-1].get("model_version")
+    newest = max(predictions, key=_anchor_ts) if predictions else None
 
     return MetricsSummary(
         data_mode=data_mode,
-        model_version=model_version,
+        model_version=newest.get("model_version") if newest else None,
         n_predictions=len(predictions),
-        n_vessels=len({r.get("meta", {}).get("mmsi") for r in predictions if r.get("meta")}),
+        n_scored=len(scores),
+        n_vessels=len(latest_per_vessel(predictions)),
         served_vs_baselines=deltas,
         median_e2e_latency_s=round(statistics.median(e2e), 3) if e2e else None,
         median_mcmnet_latency_s=round(statistics.median(mnet), 3) if mnet else None,

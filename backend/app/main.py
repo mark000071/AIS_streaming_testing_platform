@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import List
 
 from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from . import metrics as metrics_mod
@@ -31,9 +30,6 @@ app = FastAPI(
     description="Presentation layer for MCM-Net live vessel-trajectory predictions.",
     version="0.1.0",
 )
-app.add_middleware(
-    CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
-)
 
 
 @app.get("/api/health", response_model=HealthStatus)
@@ -48,9 +44,8 @@ def health() -> HealthStatus:
 
 @app.post("/api/reload")
 def reload_data() -> dict:
-    """Re-scans the data source. Cheap enough to call from a UI refresh
-    button; the demo dataset is generated once and cached, the bridge
-    reader re-reads the queue/metrics.sqlite on every call."""
+    """Re-scan the data source (demo files, or the model-side parquet store,
+    queue and metrics.sqlite in bridge mode)."""
     store.reload()
     return {"reloaded": True, "n_predictions": len(store.predictions)}
 
