@@ -140,6 +140,12 @@ def _mcmnet_fan(hist_xy, gt_xy, horizon, rng, n_hyp=N_HYPOTHESES):
     return hyps
 
 
+def _round_xy(xy):
+    """Round to millimeters, matching server.py's np.round(arr, 3) -- also
+    keeps the bundled demo JSON from ballooning with float noise."""
+    return [(round(x, 3), round(y, 3)) for x, y in xy]
+
+
 def _traj_errors(pred_xy, gt_xy):
     d = [math.hypot(px - gx, py - gy) for (px, py), (gx, gy) in zip(pred_xy, gt_xy)]
     return sum(d) / len(d), d[-1]
@@ -174,6 +180,9 @@ def generate(seed: int = 20260101, n_ticks: int = 6) -> Tuple[List[Dict[str, Any
             alpha = 0.35 if maneuver else 0.1
             blended = [(alpha * hx + (1 - alpha) * cx, alpha * hy + (1 - alpha) * cy)
                       for (hx, hy), (cx, cy) in zip(top1, cv)]
+
+            cv, ka, blended = _round_xy(cv), _round_xy(ka), _round_xy(blended)
+            hyps = [_round_xy(h) for h in hyps]
 
             def to_latlon(xy):
                 lat, lon = [], []

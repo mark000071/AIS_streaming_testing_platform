@@ -20,7 +20,11 @@ def main() -> None:
     predictions, scores = demo_data.generate()
     out_dir = REPO_ROOT / "demo" / "data"
     out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "predictions.json").write_text(json.dumps(predictions, indent=1))
+    # Compact, not pretty-printed: predictions.json holds 20 hypotheses x 30
+    # points x 2 coords per record, so indenting each number blows the file
+    # up ~60x for no readability benefit (it's read by data_source.py, not
+    # hand-edited).
+    (out_dir / "predictions.json").write_text(json.dumps(predictions, separators=(",", ":")))
     (out_dir / "scores.json").write_text(json.dumps(scores, indent=1))
     print("wrote {} predictions and {} scores to {}".format(
         len(predictions), len(scores), out_dir))
