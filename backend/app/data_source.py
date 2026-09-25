@@ -18,13 +18,14 @@ queue only adds the few seconds of forecasts not collected yet.
 
 Nothing here imports MCM_streaming code. See docs/DATA_CONTRACT.md.
 """
+
 from __future__ import annotations
 
 import json
 import logging
 import sqlite3
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from . import demo_data
 from .config import Settings
@@ -32,7 +33,7 @@ from .config import Settings
 logger = logging.getLogger("ais_platform.data_source")
 
 
-def _read_queue(queue_dir: Path, limit: int) -> List[Dict[str, Any]]:
+def _read_queue(queue_dir: Path, limit: int) -> list[dict[str, Any]]:
     if not queue_dir.is_dir():
         return []
     # the collector deletes files concurrently, so any stat/read may vanish
@@ -51,7 +52,7 @@ def _read_queue(queue_dir: Path, limit: int) -> List[Dict[str, Any]]:
     return records
 
 
-def _read_prediction_store(store_dir: Path, max_vessels: int) -> List[Dict[str, Any]]:
+def _read_prediction_store(store_dir: Path, max_vessels: int) -> list[dict[str, Any]]:
     """Latest forecast per vessel from the newest daily parquet file.
 
     Two passes so memory stays bounded on a multi-GB day: the small key
@@ -65,12 +66,15 @@ def _read_prediction_store(store_dir: Path, max_vessels: int) -> List[Dict[str, 
     try:
         import pyarrow.parquet as pq
     except ImportError:
-        logger.warning("%s holds collected predictions but pyarrow is not installed; "
-                       "install backend/requirements-bridge.txt to read them", store_dir)
+        logger.warning(
+            "%s holds collected predictions but pyarrow is not installed; "
+            "install backend/requirements-bridge.txt to read them",
+            store_dir,
+        )
         return []
 
     pf = pq.ParquetFile(str(files[-1]))
-    latest: Dict[Any, tuple] = {}
+    latest: dict[Any, tuple] = {}
     for row in pf.read(columns=["job_id", "mmsi", "anchor_ts"]).to_pylist():
         ts = row["anchor_ts"] or 0.0
         if row["mmsi"] is not None and ts >= latest.get(row["mmsi"], (None, -1.0))[1]:
@@ -82,18 +86,18 @@ def _read_prediction_store(store_dir: Path, max_vessels: int) -> List[Dict[str, 
     # a payload is ~15-25 KB (20x30x2 candidates as xy + lat/lon), so 512 rows
     # keeps each decoded batch around 10 MB
     for batch in pf.iter_batches(batch_size=512, columns=["job_id", "payload_json"]):
-        for job_id, payload in zip(batch.column(0).to_pylist(), batch.column(1).to_pylist()):
+        for job_id, payload in zip(batch.column(0).to_pylist(), batch.column(1).to_pylist(), strict=True):
             if job_id in wanted:
                 records.append(json.loads(payload))
     return records
 
 
-def _read_scores(metrics_db: Path, limit: int) -> List[Dict[str, Any]]:
+def _read_scores(metrics_db: Path, limit: int) -> list[dict[str, Any]]:
     if not metrics_db.exists():
         return []
     try:
         # mode=ro: never create or write the model side's database
-        conn = sqlite3.connect("file:{}?mode=ro".format(metrics_db.as_posix()), uri=True)
+        conn = sqlite3.connect(f"file:{metrics_db.as_posix()}?mode=ro", uri=True)
         try:
             rows = conn.execute(
                 "SELECT payload_json FROM scores ORDER BY anchor_ts DESC LIMIT ?", (limit,)
@@ -111,8 +115,8 @@ class Store:
 
     def __init__(self, settings: Settings):
         self.settings = settings
-        self.predictions: List[Dict[str, Any]] = []
-        self.scores: List[Dict[str, Any]] = []
+        self.predictions: list[dict[str, Any]] = []
+        self.scores: list[dict[str, Any]] = []
         self.source_description = ""
         self.reload()
 
@@ -129,15 +133,19 @@ class Store:
         pred_path = self.settings.demo_data_dir / "predictions.json"
         scores_path = self.settings.demo_data_dir / "scores.json"
         if pred_path.exists() and scores_path.exists():
-            return (json.loads(pred_path.read_text()), json.loads(scores_path.read_text()),
-                    "bundled demo dataset: {}".format(self.settings.demo_data_dir))
+            return (
+                json.loads(pred_path.read_text()),
+                json.loads(scores_path.read_text()),
+                f"bundled demo dataset: {self.settings.demo_data_dir}",
+            )
         predictions, scores = demo_data.generate()
         return predictions, scores, "generated in-process demo dataset (no files on disk)"
 
     def _load_bridge(self):
         root = self.settings.model_data_dir
         cap = self.settings.max_vessels
-        predictions = (_read_prediction_store(root / "predictions", cap)
-                       + _read_queue(root / "queue" / "predictions", cap * 5))
+        predictions = _read_prediction_store(root / "predictions", cap) + _read_queue(
+            root / "queue" / "predictions", cap * 5
+        )
         scores = _read_scores(root / "metrics" / "metrics.sqlite", cap * 50)
-        return predictions, scores, "MCM_streaming serving runtime: {}".format(root)
+        return predictions, scores, f"MCM_streaming serving runtime: {root}"

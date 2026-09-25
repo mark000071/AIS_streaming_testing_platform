@@ -13,6 +13,7 @@ When ``AIS_DATA_MODE`` is unset the mode is auto-detected: ``bridge`` if
 Host/port are uvicorn CLI arguments (scripts/run_demo.sh, deploy/Dockerfile),
 not settings here.
 """
+
 from __future__ import annotations
 
 import os
@@ -30,14 +31,12 @@ DEFAULT_DEMO_DATA_DIR = REPO_ROOT / "demo" / "data"
 # directory tree serving/README.md documents under `paths:` in
 # config/deployment.yaml (queue/, predictions/, metrics/metrics.sqlite).
 # This repo only ever reads from it.
-DEFAULT_MODEL_DATA_DIR = (
-    REPO_ROOT.parent / "MCM_streaming" / "serving" / "runtime"
-)
+DEFAULT_MODEL_DATA_DIR = REPO_ROOT.parent / "MCM_streaming" / "serving" / "runtime"
 
 
 @dataclass(frozen=True)
 class Settings:
-    data_mode: str            # "demo" | "bridge"
+    data_mode: str  # "demo" | "bridge"
     demo_data_dir: Path
     model_data_dir: Path
     max_vessels: int

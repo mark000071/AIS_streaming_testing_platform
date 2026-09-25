@@ -1,0 +1,23 @@
+# Platform configuration. Any key can be overridden with an ENVSHIP_<KEY> environment variable.
+redis_url: redis://localhost:6379/0
+data_dir: data
+
+# ingest-fi: Digitraffic marine AIS (CC BY 4.0). mqtt = push (default), rest = 5 s polling.
+fi_mode: mqtt
+digitraffic_user: envship-demo
+
+# replay: an archived raw_ais partition set played back at N x speed (event time is preserved).
+replay_source: fixtures/raw_ais
+replay_speed: 20
+replay_loop: true
+
+# tracker: 20 s grid, 30-step windows; each moving vessel gets a new window every stride steps.
+window_stride_steps: 15
+max_report_age_s: 60
+min_mean_sog_kn: 2.0
+
+# archive / api / jobs
+parquet_flush_s: 15
+frame_s: 2
+snapshot_refresh_s: 10
+bucket_s: 300

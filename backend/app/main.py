@@ -2,11 +2,11 @@
 Leaflet frontend in frontend/, sourced either from the bundled demo dataset
 or a live MCM_streaming serving runtime (see config.py / data_source.py).
 """
+
 from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import List
 
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
@@ -50,8 +50,8 @@ def reload_data() -> dict:
     return {"reloaded": True, "n_predictions": len(store.predictions)}
 
 
-@app.get("/api/vessels", response_model=List[VesselSummary])
-def list_vessels() -> List[VesselSummary]:
+@app.get("/api/vessels", response_model=list[VesselSummary])
+def list_vessels() -> list[VesselSummary]:
     return metrics_mod.vessel_summaries(store.predictions)[: settings.max_vessels]
 
 
@@ -59,7 +59,7 @@ def list_vessels() -> List[VesselSummary]:
 def vessel_prediction(mmsi: int) -> PredictionDetail:
     rec = metrics_mod.prediction_for_vessel(store.predictions, mmsi)
     if rec is None:
-        raise HTTPException(status_code=404, detail="no prediction for mmsi {}".format(mmsi))
+        raise HTTPException(status_code=404, detail=f"no prediction for mmsi {mmsi}")
     return metrics_mod.to_detail(rec)
 
 

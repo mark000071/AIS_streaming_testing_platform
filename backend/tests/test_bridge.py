@@ -1,6 +1,7 @@
 """Bridge mode against a fake MCM_streaming serving/runtime tree, written with
 the same layouts as serving/aisstream/predict/collect.py (daily parquet with
 payload_json) and metrics/aggregate.py (scores table)."""
+
 import json
 import sqlite3
 import sys
@@ -26,8 +27,7 @@ CREATE TABLE scores (
 
 
 def _settings(root: Path) -> Settings:
-    return Settings(data_mode="bridge", demo_data_dir=root / "unused",
-                    model_data_dir=root, max_vessels=200)
+    return Settings(data_mode="bridge", demo_data_dir=root / "unused", model_data_dir=root, max_vessels=200)
 
 
 def _real_shaped(records):
@@ -38,10 +38,16 @@ def _real_shaped(records):
 def _write_parquet(path: Path, records):
     pa = pytest.importorskip("pyarrow")
     pq = pytest.importorskip("pyarrow.parquet")
-    rows = [{
-        "job_id": r["job_id"], "mmsi": r["meta"]["mmsi"], "source": r["meta"]["source"],
-        "anchor_ts": r["meta"]["anchor_ts"], "payload_json": json.dumps(r),
-    } for r in records]
+    rows = [
+        {
+            "job_id": r["job_id"],
+            "mmsi": r["meta"]["mmsi"],
+            "source": r["meta"]["source"],
+            "anchor_ts": r["meta"]["anchor_ts"],
+            "payload_json": json.dumps(r),
+        }
+        for r in records
+    ]
     path.parent.mkdir(parents=True, exist_ok=True)
     pq.write_table(pa.Table.from_pylist(rows), str(path), compression="zstd")
 
@@ -51,9 +57,10 @@ def _write_scores(path: Path, scores):
     conn = sqlite3.connect(str(path))
     conn.executescript(SCORES_SCHEMA)
     for s in scores:
-        conn.execute("INSERT INTO scores (job_id, mmsi, source, anchor_ts, payload_json) "
-                     "VALUES (?,?,?,?,?)",
-                     (s["job_id"], s["mmsi"], s["source"], s["anchor_ts"], json.dumps(s)))
+        conn.execute(
+            "INSERT INTO scores (job_id, mmsi, source, anchor_ts, payload_json) VALUES (?,?,?,?,?)",
+            (s["job_id"], s["mmsi"], s["source"], s["anchor_ts"], json.dumps(s)),
+        )
     conn.commit()
     conn.close()
 
@@ -67,7 +74,7 @@ def runtime(tmp_path):
 def test_reads_collected_parquet_when_queue_is_drained(runtime):
     root, predictions, _ = runtime
     _write_parquet(root / "predictions" / "2026-07-20.parquet", predictions)
-    (root / "queue" / "predictions").mkdir(parents=True)   # drained by the collector
+    (root / "queue" / "predictions").mkdir(parents=True)  # drained by the collector
 
     store = Store(_settings(root))
 
@@ -134,7 +141,7 @@ def test_missing_runtime_pieces_degrade_to_empty(tmp_path):
 def test_mode_autodetect(tmp_path, monkeypatch):
     monkeypatch.delenv("AIS_DATA_MODE", raising=False)
     assert _resolve_mode(tmp_path / "missing") == "demo"
-    assert _resolve_mode(tmp_path) == "demo"          # exists but empty
+    assert _resolve_mode(tmp_path) == "demo"  # exists but empty
     (tmp_path / "metrics").mkdir()
     assert _resolve_mode(tmp_path) == "bridge"
     monkeypatch.setenv("AIS_DATA_MODE", "demo")

@@ -1,5 +1,10 @@
 # Architecture: combining 呈现端 (presentation) and 模型端 (model)
 
+> Scope: this document covers the **MCM_streaming deployment viewer**
+> (`backend/`, `frontend/`), the interim way to show real MCM-Net output.
+> The main platform is EnvShip (`packages/`, `web/`, see `README.md` and
+> `docs/roadmap.md`), where MCM-Net is planned as a predictor container.
+
 ## Goal
 
 Demonstrate MCM-Net's live-deployment result — the served rule (motion-mode

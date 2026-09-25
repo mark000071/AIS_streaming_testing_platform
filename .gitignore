@@ -1,7 +1,10 @@
 __pycache__/
 *.pyc
-.pytest_cache/
 *.egg-info/
+.pytest_cache/
 .venv/
 venv/
+data/
 node_modules/
+web/dist/
+*.tsbuildinfo
