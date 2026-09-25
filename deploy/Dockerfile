@@ -21,9 +21,9 @@ USER app
 
 ENV AIS_DATA_MODE=demo \
     AIS_HOST=0.0.0.0 \
-    AIS_PORT=8080
+    AIS_PORT=8090
 
-EXPOSE 8080
+EXPOSE 8090
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s \
   CMD python3 -c "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:%s/api/health' % os.environ['AIS_PORT'], timeout=2)" || exit 1

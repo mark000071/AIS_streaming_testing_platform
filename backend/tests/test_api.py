@@ -5,9 +5,8 @@ from pathlib import Path
 os.environ["AIS_DATA_MODE"] = "demo"
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from fastapi.testclient import TestClient
-
 from app.main import app
+from fastapi.testclient import TestClient
 
 client = TestClient(app)
 
@@ -31,7 +30,7 @@ def test_list_vessels_nonempty():
 
 def test_vessel_prediction_detail():
     mmsi = client.get("/api/vessels").json()[0]["mmsi"]
-    r = client.get("/api/vessels/{}/prediction".format(mmsi))
+    r = client.get(f"/api/vessels/{mmsi}/prediction")
     assert r.status_code == 200
     detail = r.json()
     assert detail["mmsi"] == mmsi

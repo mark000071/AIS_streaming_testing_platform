@@ -47,5 +47,5 @@ include = ["packages", "tests"]
 pythonVersion = "3.11"
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "backend/tests"]
 addopts = "-q"

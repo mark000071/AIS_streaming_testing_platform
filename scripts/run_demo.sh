@@ -7,7 +7,7 @@ cd "$(dirname "$0")/.."
 
 export AIS_DATA_MODE="${AIS_DATA_MODE:-demo}"
 export AIS_HOST="${AIS_HOST:-0.0.0.0}"
-export AIS_PORT="${AIS_PORT:-8080}"
+export AIS_PORT="${AIS_PORT:-8090}"
 
 if [ "$AIS_DATA_MODE" = "bridge" ]; then
   python3 -m pip install -q -r backend/requirements-bridge.txt

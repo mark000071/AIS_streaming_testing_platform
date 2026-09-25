@@ -6,6 +6,7 @@ AIS_DATA_MODE isn't forced to 'bridge') stays in sync:
 
     python3 demo/generate_demo_data.py
 """
+
 import json
 import sys
 from pathlib import Path
@@ -26,8 +27,7 @@ def main() -> None:
     # hand-edited).
     (out_dir / "predictions.json").write_text(json.dumps(predictions, separators=(",", ":")))
     (out_dir / "scores.json").write_text(json.dumps(scores, indent=1))
-    print("wrote {} predictions and {} scores to {}".format(
-        len(predictions), len(scores), out_dir))
+    print(f"wrote {len(predictions)} predictions and {len(scores)} scores to {out_dir}")
 
 
 if __name__ == "__main__":

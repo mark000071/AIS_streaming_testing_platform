@@ -1,8 +1,9 @@
 """Turns raw prediction/score records (see data_source.py) into API shapes."""
+
 from __future__ import annotations
 
 import statistics
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .schemas import (
     BaselineDelta,
@@ -15,20 +16,20 @@ from .schemas import (
 )
 
 
-def _hyp_block(block: Optional[Dict[str, Any]]) -> Optional[HypothesisBlock]:
+def _hyp_block(block: dict[str, Any] | None) -> HypothesisBlock | None:
     if not block:
         return None
     return HypothesisBlock(lat=block["lat"], lon=block["lon"])
 
 
-def _anchor_ts(rec: Dict[str, Any]) -> float:
+def _anchor_ts(rec: dict[str, Any]) -> float:
     return rec.get("meta", {}).get("anchor_ts") or 0.0
 
 
-def latest_per_vessel(predictions: List[Dict[str, Any]]) -> Dict[int, Dict[str, Any]]:
+def latest_per_vessel(predictions: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
     """Newest forecast per MMSI, ignoring records without an anchor position
     (nothing sensible to draw for them)."""
-    latest: Dict[int, Dict[str, Any]] = {}
+    latest: dict[int, dict[str, Any]] = {}
     for rec in predictions:
         meta = rec.get("meta", {})
         mmsi = meta.get("mmsi")
@@ -40,43 +41,49 @@ def latest_per_vessel(predictions: List[Dict[str, Any]]) -> Dict[int, Dict[str, 
     return latest
 
 
-def vessel_summaries(predictions: List[Dict[str, Any]]) -> List[VesselSummary]:
+def vessel_summaries(predictions: list[dict[str, Any]]) -> list[VesselSummary]:
     out = []
     # newest first, so the endpoint's max_vessels cap drops stale vessels
-    for mmsi, rec in sorted(latest_per_vessel(predictions).items(),
-                            key=lambda kv: _anchor_ts(kv[1]), reverse=True):
+    for mmsi, rec in sorted(
+        latest_per_vessel(predictions).items(), key=lambda kv: _anchor_ts(kv[1]), reverse=True
+    ):
         meta = rec["meta"]
-        out.append(VesselSummary(
-            mmsi=mmsi,
-            source=meta.get("source", "unknown"),
-            ship_class=meta.get("unified_class"),
-            last_lat=meta["anchor_lat"],
-            last_lon=meta["anchor_lon"],
-            last_sog_kn=meta.get("anchor_sog_kn"),
-            last_seen_ts=_anchor_ts(rec),
-            has_model="mcmnet" in rec,
-        ))
+        out.append(
+            VesselSummary(
+                mmsi=mmsi,
+                source=meta.get("source", "unknown"),
+                ship_class=meta.get("unified_class"),
+                last_lat=meta["anchor_lat"],
+                last_lon=meta["anchor_lon"],
+                last_sog_kn=meta.get("anchor_sog_kn"),
+                last_seen_ts=_anchor_ts(rec),
+                has_model="mcmnet" in rec,
+            )
+        )
     return out
 
 
-def prediction_for_vessel(predictions: List[Dict[str, Any]], mmsi: int) -> Optional[Dict[str, Any]]:
+def prediction_for_vessel(predictions: list[dict[str, Any]], mmsi: int) -> dict[str, Any] | None:
     latest = latest_per_vessel(predictions)
     return latest.get(mmsi)
 
 
-def to_detail(rec: Dict[str, Any]) -> PredictionDetail:
+def to_detail(rec: dict[str, Any]) -> PredictionDetail:
     meta = rec["meta"]
     anchor = TrackPoint(lat=meta["anchor_lat"], lon=meta["anchor_lon"])
     hist = rec.get("history")
     if hist and hist.get("lat"):
-        history = [TrackPoint(lat=la, lon=lo) for la, lo in zip(hist["lat"], hist["lon"])]
+        history = [TrackPoint(lat=la, lon=lo) for la, lo in zip(hist["lat"], hist["lon"], strict=True)]
     else:
         history = [anchor]
 
     model_block = None
     mc = rec.get("mcmnet")
     if mc:
-        hyps = [HypothesisBlock(lat=la, lon=lo) for la, lo in zip(mc.get("lat", []), mc.get("lon", []))]
+        hyps = [
+            HypothesisBlock(lat=la, lon=lo)
+            for la, lo in zip(mc.get("lat", []), mc.get("lon", []), strict=True)
+        ]
         routed = mc.get("routed") or {}
         model_block = ModelBlock(
             model_version=rec.get("model_version", "unknown"),
@@ -104,10 +111,11 @@ def to_detail(rec: Dict[str, Any]) -> PredictionDetail:
 
 
 def _diff(a: str, b: str):
-    def get(row: Dict[str, Any]) -> Optional[float]:
+    def get(row: dict[str, Any]) -> float | None:
         if row.get(a) is None or row.get(b) is None:
             return None
         return row[a] - row[b]
+
     return get
 
 
@@ -116,26 +124,41 @@ def _diff(a: str, b: str):
 # routed_ade/routed_cvkal_ade pair, exactly how ROUTING_SCORER_REPORT.md
 # separates routing's contribution from MCM-Net's.
 _DELTAS = [
-    ("Served rule vs. Constant-Velocity", lambda r: r.get("delta_ade_routed_minus_cv"),
-     "Mean ADE delta (m) of the served (routed) trajectory vs. CV; negative = closer to ground truth."),
-    ("Served rule vs. Kalman", lambda r: r.get("delta_ade_routed_minus_kalman"),
-     "Mean ADE delta (m) of the served (routed) trajectory vs. Kalman."),
-    ("MCM-Net marginal (routed vs. CV|Kalman-only routing)", _diff("routed_ade", "routed_cvkal_ade"),
-     "Same routing decision with CV on the maneuver leg instead of MCM-Net: what the deep model itself adds."),
-    ("MCM-Net top-1 alone vs. Constant-Velocity", lambda r: r.get("delta_ade_mcmnet_minus_cv"),
-     "The raw first candidate, before scoring/routing blend it with the baselines."),
+    (
+        "Served rule vs. Constant-Velocity",
+        lambda r: r.get("delta_ade_routed_minus_cv"),
+        "Mean ADE delta (m) of the served (routed) trajectory vs. CV; negative = closer to ground truth.",
+    ),
+    (
+        "Served rule vs. Kalman",
+        lambda r: r.get("delta_ade_routed_minus_kalman"),
+        "Mean ADE delta (m) of the served (routed) trajectory vs. Kalman.",
+    ),
+    (
+        "MCM-Net marginal (routed vs. CV|Kalman-only routing)",
+        _diff("routed_ade", "routed_cvkal_ade"),
+        "Same routing decision with CV on the maneuver leg instead of MCM-Net: what the deep model itself adds.",
+    ),
+    (
+        "MCM-Net top-1 alone vs. Constant-Velocity",
+        lambda r: r.get("delta_ade_mcmnet_minus_cv"),
+        "The raw first candidate, before scoring/routing blend it with the baselines.",
+    ),
 ]
 
 
-def metrics_summary(predictions: List[Dict[str, Any]], scores: List[Dict[str, Any]],
-                    data_mode: str) -> MetricsSummary:
+def metrics_summary(
+    predictions: list[dict[str, Any]], scores: list[dict[str, Any]], data_mode: str
+) -> MetricsSummary:
     deltas = []
     for label, value, desc in _DELTAS:
         vals = [v for v in map(value, scores) if v is not None]
         if vals:
-            deltas.append(BaselineDelta(label=label, n=len(vals),
-                                        mean_delta_m=round(statistics.mean(vals), 2),
-                                        description=desc))
+            deltas.append(
+                BaselineDelta(
+                    label=label, n=len(vals), mean_delta_m=round(statistics.mean(vals), 2), description=desc
+                )
+            )
 
     e2e = [r["e2e_latency_s"] for r in predictions if r.get("e2e_latency_s") is not None]
     mnet = [r["mcmnet_latency_s"] for r in predictions if r.get("mcmnet_latency_s") is not None]
