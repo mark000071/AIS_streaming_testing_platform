@@ -106,6 +106,7 @@ uv run envship benchmark --predictors cv,kalman,imm,mcmnet   # 离线同条件�
 - **令牌**：`HF_TOKEN` 只从环境变量读取，不要写进代码或提交。Colab 里建议放在"密钥"（Secrets）里。
 - **速度**：CPU 上每个窗口约 0.3–0.8 s，20× 回放产生窗口的速度（约每秒 6 个）超过单进程 CPU 的处理能力，过期的窗口会被跳过、计入缺失。CPU 上用 `--speed 5` 左右或 `--mcmnet-replicas N`；有 GPU 时 `MCM_DEVICE=cuda`（脚本会自动检测）。
 - **`uv sync` 会移除 torch**：torch / scipy / osmium 不在工作区锁文件里（CPU 和 GPU 版本来源不同），`uv run` 会保留它们，但单独执行 `uv sync` 后需要重新运行 `scripts/setup_mcmnet.sh`。
+- **主预测规则**：目前取第一条候选，即 MCM 部署时记录的 top-1 规则。k-means 候选本身没有排序，所以它的主预测误差明显高于 20 条中最好一条。MCM 部署时真正服务的规则是"学习打分头选候选、与 CV 以 0.1:0.9 混合，再按转向率路由（直航用 Kalman）"。它的 MLP 打分头权重 `scorer_online_final.npz` 目前在 GitHub 和 Hugging Face 上都找不到（HF 上的 `scorer_head.pkl` 是消融用的 GBDT，与 `model/scorer/artifacts/gbdt_ablation.pkl` 相同），补齐后再作为单独的 `mcmnet-routed` 预测器上榜。
 - **离线评测** `envship benchmark`：把回放数据完整跑一遍 tracker，所有预测器对同一批窗口同步作答再统一打分，按全部 / 直航 / 转向分层输出误差，适合公平比较；实时覆盖率和延迟仍以在线排行榜为准。
 
 ### 过渡方案：MCM_streaming 部署的只读查看器
