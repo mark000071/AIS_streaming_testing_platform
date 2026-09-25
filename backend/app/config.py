@@ -1,18 +1,17 @@
 """Runtime settings for the presentation service.
 
 Everything here is environment-driven so the same container image serves
-three modes without a rebuild:
+either mode without a rebuild:
 
 - ``demo``   -- reads the bundled synthetic dataset under ``demo/data``.
-- ``bridge`` -- tails a real MCM-Net serving prediction queue/store
-                (``AIS_MODEL_DATA_DIR``), e.g. a sibling checkout of
-                ``MCM_streaming/serving/runtime``. This repo never imports
-                or modifies MCM_streaming code; it only reads the JSON
-                records that ``serving/aisstream/predict/server.py``
-                already writes (see docs/DATA_CONTRACT.md).
-- the mode is auto-detected when ``AIS_DATA_MODE`` is unset: ``bridge`` if
-  ``AIS_MODEL_DATA_DIR`` points at an existing directory with data,
-  ``demo`` otherwise.
+- ``bridge`` -- reads a real MCM_streaming ``serving/runtime`` tree
+                (``AIS_MODEL_DATA_DIR``), read-only; no MCM_streaming code
+                is imported (see docs/DATA_CONTRACT.md).
+
+When ``AIS_DATA_MODE`` is unset the mode is auto-detected: ``bridge`` if
+``AIS_MODEL_DATA_DIR`` is an existing, non-empty directory, else ``demo``.
+Host/port are uvicorn CLI arguments (scripts/run_demo.sh, deploy/Dockerfile),
+not settings here.
 """
 from __future__ import annotations
 
@@ -41,9 +40,6 @@ class Settings:
     data_mode: str            # "demo" | "bridge"
     demo_data_dir: Path
     model_data_dir: Path
-    host: str
-    port: int
-    poll_interval_s: float
     max_vessels: int
 
 
@@ -63,8 +59,5 @@ def load_settings() -> Settings:
         data_mode=_resolve_mode(model_dir),
         demo_data_dir=demo_dir,
         model_data_dir=model_dir,
-        host=os.environ.get("AIS_HOST", "0.0.0.0"),
-        port=int(os.environ.get("AIS_PORT", "8080")),
-        poll_interval_s=float(os.environ.get("AIS_POLL_INTERVAL_S", "2.0")),
         max_vessels=int(os.environ.get("AIS_MAX_VESSELS", "200")),
     )

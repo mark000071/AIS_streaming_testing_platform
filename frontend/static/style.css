@@ -81,7 +81,8 @@ main {
 #vessel-list .mmsi { color: var(--text); font-weight: 600; }
 #vessel-list .meta { color: var(--muted); }
 
-.delta-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 0.85rem; border-bottom: 1px dashed var(--border); }
+.delta-row { display: flex; justify-content: space-between; gap: 10px; padding: 4px 0; font-size: 0.85rem; border-bottom: 1px dashed var(--border); }
+.delta-value { white-space: nowrap; }
 .delta-row:last-child { border-bottom: none; }
 .delta-value.negative { color: #6fe3a1; font-weight: 700; }
 .delta-value.positive { color: #f2734a; font-weight: 700; }
