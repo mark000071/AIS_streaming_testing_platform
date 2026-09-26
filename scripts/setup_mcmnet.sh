@@ -2,7 +2,7 @@
 # Prepare everything the MCM-Net predictor needs, next to this repository:
 #   ../MCM_streaming                 model + feature code (cloned read-only, never modified)
 #   ../hf_artifacts/weights/combined deployed model from the private Hugging Face repo (needs HF_TOKEN)
-#   ../envtiles/finland              OSM environment tiles for the Finnish coast
+#   ../hf_artifacts/envtiles         MCM's deployment environment tiles (Finland + Norway coast, from the same repo)
 # and install torch + scipy into the uv environment.
 #
 #   HF_TOKEN=hf_... scripts/setup_mcmnet.sh [cpu|cuda]      (default: cuda if nvidia-smi works, else cpu)
@@ -13,7 +13,9 @@ cd "$(dirname "$0")/.."
 WORK="$(cd .. && pwd)"
 MCM_ROOT="$WORK/MCM_streaming"
 MCM_WEIGHTS="$WORK/hf_artifacts/weights/combined"
-MCM_TILES="$WORK/envtiles/finland"
+TILES="$WORK/hf_artifacts/envtiles"
+MCM_TILES="$TILES/tiles_finland_full,$TILES/tiles_norway_full"
+HF="https://huggingface.co/mark000071/MCM_streaming/resolve/main"
 
 if [ "${1:-}" = "--print-env" ]; then
   device=cpu
@@ -31,35 +33,36 @@ echo "== 1/4 MCM_streaming code -> $MCM_ROOT"
 [ -d "$MCM_ROOT/.git" ] || git clone -q https://github.com/mark000071/MCM_streaming.git "$MCM_ROOT"
 
 echo "== 2/4 weights/combined -> $MCM_WEIGHTS"
-if [ ! -s "$MCM_WEIGHTS/model_ae.pt" ]; then
+fetch() {  # fetch <repo path> <local file>, skipped when already there
+  [ -s "$2" ] && return 0
   : "${HF_TOKEN:?set HF_TOKEN to a Hugging Face token with read access to mark000071/MCM_streaming}"
-  mkdir -p "$MCM_WEIGHTS/memory_bank"
-  for f in model_ae.pt frozen_feature_stats.json preprocessing_config.json scorer_head.pkl \
-           memory_bank/filter_past.pt memory_bank/filter_fut.pt memory_bank/part_traj.pt; do
-    curl -fsSL -H "Authorization: Bearer $HF_TOKEN" -o "$MCM_WEIGHTS/$f" \
-      "https://huggingface.co/mark000071/MCM_streaming/resolve/main/weights/combined/$f"
-  done
-fi
+  mkdir -p "$(dirname "$2")"
+  curl -fsSL -H "Authorization: Bearer $HF_TOKEN" -o "$2.part" "$HF/$1" && mv "$2.part" "$2"
+}
+# model + memory bank; scorer_online_final = the deployed served-rule scorer; type_cache = MMSI -> ship class
+for f in model_ae.pt frozen_feature_stats.json preprocessing_config.json \
+         memory_bank/filter_past.pt memory_bank/filter_fut.pt \
+         scorer_online_final.npz scorer_online_final.json type_cache.json; do
+  fetch "weights/combined/$f" "$MCM_WEIGHTS/$f"
+done
 
-echo "== 3/4 torch ($DEVICE) + scipy + osmium into the uv environment"
+echo "== 3/4 torch ($DEVICE) + scipy into the uv environment"
 uv sync -q
 if [ "$DEVICE" = "cuda" ]; then
   uv pip install -q torch --index-url https://download.pytorch.org/whl/cu124
 else
   uv pip install -q torch --index-url https://download.pytorch.org/whl/cpu
 fi
-uv pip install -q scipy osmium
+uv pip install -q scipy
 # note: a later plain `uv sync` removes these again; `uv run` keeps them
 
-echo "== 4/4 OSM environment tiles -> $MCM_TILES"
-if [ ! -f "$MCM_TILES/coverage.json" ] || ! grep -q '"completed_bboxes"' "$MCM_TILES/coverage.json"; then
-  mkdir -p "$WORK/osm" "$MCM_TILES"
-  PBF="$WORK/osm/finland-latest.osm.pbf"
-  [ -s "$PBF" ] || curl -fsSL -o "$PBF" https://download.openstreetmap.fr/extracts/europe/finland-latest.osm.pbf
-  # the fixture spans 57.8-65.8 N, 17.0-30.9 E; resumable per 1-degree latitude slab
-  (cd "$MCM_ROOT/serving" && TMPDIR="$WORK/envtiles" uv run --project "$OLDPWD" python -m aisstream.envtiles.build_tiles \
-    --pbf "$PBF" --out "$MCM_TILES" --bbox 57.5,17.0,66.0,31.0 --tile-deg 0.25 --slab-deg 1.0)
-fi
+echo "== 4/4 environment tiles -> $TILES"
+for region in finland norway; do
+  if [ ! -f "$TILES/tiles_${region}_full/coverage.json" ]; then
+    fetch "envtiles/tiles_${region}_full.tar.gz" "$TILES/tiles_${region}_full.tar.gz"
+    tar xzf "$TILES/tiles_${region}_full.tar.gz" -C "$TILES"
+  fi
+done
 
 echo
 echo "done. Enable MCM-Net for this shell with:"
