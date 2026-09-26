@@ -109,6 +109,18 @@ uv run envship benchmark --predictors cv,kalman,imm,mcmnet,mcmnet-top1   # 离�
 - **速度**：CPU 上每个窗口约 0.3–0.8 s，20× 回放产生窗口的速度（约每秒 6 个）超过单进程 CPU 的处理能力，过期的窗口会被跳过、计入缺失。CPU 上用 `--speed 5` 左右或 `--mcmnet-replicas N`；有 GPU 时 `MCM_DEVICE=cuda`（脚本会自动检测）。
 - **`uv sync` 会移除 torch**：torch / scipy 不在工作区锁文件里（CPU 和 GPU 版本来源不同），`uv run` 会保留它们，但单独执行 `uv sync` 后需要重新运行 `scripts/setup_mcmnet.sh`。
 - **主预测规则**：k-means 候选本身没有排序，所以 top-1 的主预测误差明显高于 20 条中最好一条；部署规则（`mcmnet`）用打分头 + 路由解决这一点，离线对比见下表。
+
+离线对比（`envship benchmark`，内置芬兰 40 分钟样例，全部 481 个有真值的窗口，CPU 4 线程）：
+
+| 预测器 | 主预测 ADE（全部 / 直航 / 转向） | best-of-K ADE（全部） | 每窗口耗时 p50 |
+|---|---|---|---|
+| cv | 153.7 / 117.0 / 388.6 m | 153.7 m（K=1） | <1 ms |
+| kalman | 169.0 / 129.0 / 425.5 m | 147.6 m（K=3） | 0.7 ms |
+| imm | 173.9 / 129.0 / 461.4 m | 146.4 m（K=3） | 5 ms |
+| **mcmnet**（部署规则） | 162.5 / 124.2 / 407.8 m | 154.8 m（K=20） | 351 ms |
+| mcmnet-top1 | 376.6 / 337.6 / 626.5 m | 154.8 m（K=20） | 338 ms |
+
+部署规则把 MCM-Net 的主预测误差从 377 m 降到 163 m，好于 kalman / imm，但在这份样例上仍略逊于 CV。样例只有 40 分钟、481 个窗口，且芬兰海域不在 MCM-Net 的训练域（DMA / NOAA / Norway / Piraeus）内；MCM 自己在训练域留出集上报告的是部署规则比 CV 低 16.6 m（`model/routing/artifacts/router_rule.json`），要在本平台复现需要更长的、训练域内的回放数据。
 - **离线评测** `envship benchmark`：把回放数据完整跑一遍 tracker，所有预测器对同一批窗口同步作答再统一打分，按全部 / 直航 / 转向分层输出误差，适合公平比较；实时覆盖率和延迟仍以在线排行榜为准。
 
 ### 过渡方案：MCM_streaming 部署的只读查看器
