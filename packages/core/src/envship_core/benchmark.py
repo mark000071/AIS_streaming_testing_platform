@@ -5,7 +5,7 @@ predictor synchronously on every window, so slow predictors (MCM-Net on a CPU) a
 without real-time pressure: nothing goes stale and nothing is missed. The live leaderboard remains the place
 to judge real-time behaviour (coverage, latency).
 
-``envship benchmark [--source fixtures/raw_ais] [--predictors cv,kalman,imm,mcmnet] [--max-windows N]``
+``envship benchmark [--source fixtures/raw_ais] [--predictors cv,kalman,imm,mcmnet,mcmnet-top1] [--max-windows N]``
 """
 
 from __future__ import annotations
@@ -81,10 +81,10 @@ def windows_and_truths(source: Path, s: Settings, log: logging.Logger) -> tuple[
 def _build(kind: str):
     from envship_predictors import REGISTRY
 
-    if kind == "mcmnet":
+    if kind in ("mcmnet", "mcmnet-top1"):
         from envship_predictors.mcmnet import MCMNet
 
-        return MCMNet()
+        return MCMNet(serve="routed" if kind == "mcmnet" else "top1")
     return REGISTRY[kind]()
 
 
@@ -148,7 +148,11 @@ def main() -> None:
     s = get_settings()
     ap = argparse.ArgumentParser(prog="envship benchmark")
     ap.add_argument("--source", type=Path, default=s.replay_source)
-    ap.add_argument("--predictors", default="cv,kalman,imm", help="comma-separated; add mcmnet to include it")
+    ap.add_argument(
+        "--predictors",
+        default="cv,kalman,imm",
+        help="comma-separated; add mcmnet (deployed served rule) and/or mcmnet-top1 to include MCM-Net",
+    )
     ap.add_argument("--max-windows", type=int, default=None)
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
@@ -157,11 +161,11 @@ def main() -> None:
         args.source, [k.strip() for k in args.predictors.split(",") if k.strip()], args.max_windows, s, log
     )
     print(
-        f"\n{'predictor':<10} {'stratum':<16} {'n':>5} {'served ADE':>11} {'best-of-K':>10} {'FDE':>9} {'p50 ms':>8}"
+        f"\n{'predictor':<12} {'stratum':<16} {'n':>5} {'served ADE':>11} {'best-of-K':>10} {'FDE':>9} {'p50 ms':>8}"
     )
     for r in rows:
         print(
-            f"{r['predictor']:<10} {r['stratum']:<16} {r['n']:>5} {r['served_ade']:>10.1f}m "
+            f"{r['predictor']:<12} {r['stratum']:<16} {r['n']:>5} {r['served_ade']:>10.1f}m "
             f"{r['best_of_k_ade']:>9.1f}m {r['served_fde']:>8.1f}m {r['compute_ms_p50']:>8.1f}"
         )
 

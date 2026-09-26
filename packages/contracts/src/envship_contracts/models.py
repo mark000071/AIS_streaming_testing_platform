@@ -101,6 +101,11 @@ class Candidates(_Msg):
     paths: F32_KxTx2 = Field(description="displacement (east, north) in metres from the anchor")
     scores: F32_K | None = None
     selected: int = 0
+    oracle_k: int = Field(
+        default=0,
+        description="best-of-K covers the first oracle_k paths (0 = all); lets a served path that is not one of "
+        "the model's candidates (e.g. a blend) ride along without counting toward best-of-K",
+    )
     compute_ms: float = 0.0
 
 

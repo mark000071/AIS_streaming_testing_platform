@@ -9,7 +9,7 @@ from envship_contracts import Window, streams
 from envship_core import devstack
 from envship_core.settings import Settings
 from envship_core.tracker import Tracker
-from envship_predictors.mcmnet import MCMNet, kmeans_seed, to_platform_paths, window_points
+from envship_predictors.mcmnet import MCMNet, grid_interpolated, kmeans_seed, to_platform_paths, window_points
 from envship_sdk import TileStore
 
 from .conftest import FakePipe, straight_track
@@ -57,6 +57,24 @@ def test_unknown_speed_and_course_become_none(tmp_path):
     assert pts[3].sog is None and pts[4].cog is None
 
 
+def test_grid_interpolated_flags_steps_without_an_exact_report(tmp_path):
+    w = _windows(tmp_path, straight_track(230000001, T0, 45, 12.0, 70.0))[0]
+    tokens = np.array(w.tokens, copy=True)
+    tokens[:, 6] = 0.0
+    tokens[5, 6] = 7.0  # report 7 s older than the grid step
+    flags = grid_interpolated(w.model_copy(update={"tokens": tokens}))
+    assert len(flags) == 30 and flags[5] and sum(flags) == 1
+
+
+def test_serve_mode_picks_the_predictor_id(monkeypatch):
+    monkeypatch.setenv("MCM_ROOT", "/nonexistent")
+    monkeypatch.setenv("MCM_WEIGHTS", "/nonexistent")
+    assert MCMNet().info().id == "mcmnet"
+    assert MCMNet(serve="top1").info().id == "mcmnet-top1"
+    with pytest.raises(RuntimeError, match="MCM_SERVE"):
+        MCMNet(serve="best")
+
+
 def test_model_output_converts_to_platform_east_north():
     hyps = np.zeros((20, 30, 2))
     hyps[:, :, 0] = np.linspace(100, 3000, 30)  # due east in MCM metres
@@ -88,7 +106,7 @@ _HAVE_MODEL = bool(os.environ.get("MCM_ROOT") and os.environ.get("MCM_WEIGHTS"))
 @pytest.mark.skipif(not _HAVE_MODEL, reason="needs MCM_ROOT, MCM_WEIGHTS and torch")
 def test_real_model_predicts_ahead_of_a_straight_vessel(tmp_path):
     w = _windows(tmp_path, straight_track(230000001, T0, 45, 12.0, 90.0))[0]
-    p = MCMNet(threads=2)
+    p = MCMNet(threads=2, serve="top1")
     p.warmup(TileStore(None))
     c = p.predict(w)
     assert c.paths.shape == (20, 30, 2) and c.selected == 0
@@ -96,3 +114,16 @@ def test_real_model_predicts_ahead_of_a_straight_vessel(tmp_path):
     # 10 min at 12 kn due east is ~3.7 km east; the served candidate should head that way
     assert 2000 < end[0] < 5000 and abs(end[1]) < 1500
     assert p.predict(w).paths.tolist() == c.paths.tolist()  # deterministic per window
+
+
+@pytest.mark.skipif(not _HAVE_MODEL, reason="needs MCM_ROOT, MCM_WEIGHTS and torch")
+def test_real_model_routes_a_straight_vessel_to_kalman(tmp_path):
+    w = _windows(tmp_path, straight_track(230000001, T0, 45, 12.0, 90.0))[0]
+    p = MCMNet(threads=2, serve="routed")
+    p.warmup(TileStore(None))
+    c = p.predict(w)
+    paths = np.asarray(c.paths)
+    assert paths.shape == (21, 30, 2) and c.selected == 20 and c.oracle_k == 20
+    # straight history -> the router serves the Kalman rollout: ~3.7 km due east after 10 min
+    assert 3300 < paths[20, -1, 0] < 4100 and abs(paths[20, -1, 1]) < 100
+    assert "scorer_online" in c.model_revision

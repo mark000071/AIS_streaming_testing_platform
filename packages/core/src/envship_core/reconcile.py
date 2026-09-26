@@ -50,12 +50,13 @@ def score_candidates(c: Candidates, truth: Truth) -> dict:
     sel = int(c.selected) if 0 <= c.selected < len(paths) else 0
     last = int(np.flatnonzero(valid)[-1])
     per_h = np.where(valid, err[sel], np.nan).astype(np.float32)
+    k = int(c.oracle_k) if 0 < c.oracle_k <= len(paths) else len(paths)
     return {
         "served_ade": float(ade_k[sel]),
         "served_fde": float(err[sel, last]),
-        "oracle_ade": float(ade_k.min()),
+        "oracle_ade": float(ade_k[:k].min()),
         "per_horizon": per_h,
-        "k": int(len(paths)),
+        "k": k,
     }
 
 

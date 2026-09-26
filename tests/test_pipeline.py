@@ -147,3 +147,17 @@ def test_score_math_respects_validity_mask():
     r = score_candidates(c, t)
     assert r["served_ade"] == 10.0 and r["oracle_ade"] == 3.0 and r["served_fde"] == 10.0
     assert np.isnan(r["per_horizon"][25]) and r["k"] == 2
+
+
+def test_best_of_k_can_leave_out_a_served_path_that_is_not_a_candidate():
+    fut = np.zeros((30, 2), np.float32)
+    paths = np.zeros((3, 30, 2), np.float32)
+    paths[0, :, 0] = 40.0
+    paths[1, :, 0] = 25.0
+    paths[2, :, 0] = 5.0  # served blend, appended after the model's candidates
+    t = Truth(
+        window_id="w", mmsi=1, feed="fi", anchor_ts=0, future_xy=fut, valid=np.ones(30, bool), coverage=1.0
+    )
+    r = score_candidates(Candidates(window_id="w", paths=paths, selected=2, oracle_k=2), t)
+    assert r["served_ade"] == 5.0 and r["oracle_ade"] == 25.0 and r["k"] == 2
+    assert score_candidates(Candidates(window_id="w", paths=paths, selected=2), t)["oracle_ade"] == 5.0

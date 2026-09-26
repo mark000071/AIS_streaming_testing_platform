@@ -84,7 +84,7 @@ replay 模式下事件时间是 20× 的：真值在锚点后 10 分钟事件时
 | **GitHub Actions** | ✅ | lint → pyright → parity → pytest → 前端构建 → 镜像构建（未推 GHCR） |
 | Digitraffic **MQTT push** | ✅ | 另有 REST 轮询兜底（`fi_mode: rest`） |
 
-**Demo 中尚未包含**（需要路线图里提到的外部资源或后续泳道）：Kystdatahuset 挪威 feed、平台自身窗口里的 OSM 环境栅格（`tile_id` 目前为 `none`，`geom` 为零向量；MCM-Net 预测器自带环境瓦片，见下节）、MCM-Net 的 `routed` 部署规则预测器、HF / Zenodo 发布、Loki / Alertmanager / restic 备份、Protomaps 自托管底图、GHCR 推送与外部提交 CI 流程。
+**Demo 中尚未包含**（需要路线图里提到的外部资源或后续泳道）：Kystdatahuset 挪威 feed、平台自身窗口里的 OSM 环境栅格（`tile_id` 目前为 `none`，`geom` 为零向量；MCM-Net 预测器自带环境瓦片，见下节）、HF / Zenodo 发布、Loki / Alertmanager / restic 备份、Protomaps 自托管底图、GHCR 推送与外部提交 CI 流程。
 
 ## 与模型端（MCM_streaming）的结合
 
@@ -92,21 +92,23 @@ replay 模式下事件时间是 20× 的：真值在锚点后 10 分钟事件时
 
 ### MCM-Net 预测器（`mcmnet`）
 
-MCM-Net 作为平台的第五个预测器，和 cv / kalman / imm 用同一批窗口、同一个 reconcile 裁判打分，上同一张排行榜。它运行的是 Hugging Face 私有仓 `mark000071/MCM_streaming` 里部署用的 `weights/combined` 模型（记忆库 189,891 条），每个窗口给出 20 条候选，主预测取第一条（与 MCM 部署时的 top-1 规则一致）。
+MCM-Net 作为平台的第五个预测器，和 cv / kalman / imm 用同一批窗口、同一个 reconcile 裁判打分，上同一张排行榜。它运行的是 Hugging Face 私有仓 `mark000071/MCM_streaming` 里部署用的 `weights/combined` 模型（记忆库 189,891 条），每个窗口给出 20 条候选；主预测（served）按 MCM 部署时真正服务的规则（`deployment.yaml` 的 `mcmnet.routed`）选出：历史转向率 `turn_abs` ≤ 0.0153 rad/步（直航）时用 MCM 自己的 Kalman 外推，否则（机动）用 MLP 打分头 `scorer_online_final`（`scorer_online_v1_pairwise_a0.1`）选出的候选与 CV 外推按 0.1 : 0.9 混合。这条 served 轨迹附在 20 条候选之后（第 21 条，`selected=20`），通过 `oracle_k=20` 不计入 best-of-K，所以 best-of-K 仍只衡量模型的 20 条候选。
 
-输入与训练完全一致：模型、特征构造和环境栅格化代码都直接调用 MCM_streaming 仓库里的原始实现（`model/models/model_test_trajectory_res.py`、`serving/aisstream/features/`、`serving/aisstream/envtiles/`），只读、不修改。平台窗口里 30 个网格点的经纬度用 MCM 自己的投影公式重新换算；船型暂时一律按 `unknown`（平台还没有接入 AIS 静态报文）；环境输入来自按 MCM 流程从 OSM 生成的瓦片，瓦片覆盖不到的位置按训练时"缺失环境"的约定输入全零，并在该预测的 `model_revision` 上标记 `+no-env`。
+另有 `mcmnet-top1`（`MCM_SERVE=top1`）：主预测取第一条候选，即 MCM 论文 / 部署日志里的 top-1 规则，用作消融对照。
+
+输入与训练完全一致：模型、特征构造和环境栅格化代码都直接调用 MCM_streaming 仓库里的原始实现（`model/models/model_test_trajectory_res.py`、`serving/aisstream/features/`、`serving/aisstream/envtiles/`），只读、不修改。平台窗口里 30 个网格点的经纬度用 MCM 自己的投影公式重新换算；船型取自 MCM 部署积累的 `type_cache.json`（MMSI → 船型类别，不在其中的按 `unknown`）；环境输入用 MCM 部署时的同一套瓦片（HF `envtiles/tiles_finland_full`、`tiles_norway_full`），瓦片覆盖不到的位置按训练时"缺失环境"的约定输入全零，并在该预测的 `model_revision` 上标记 `+no-env`。
 
 ```bash
-HF_TOKEN=hf_...  scripts/setup_mcmnet.sh        # 克隆 MCM_streaming、下载权重、装 torch、生成芬兰 OSM 瓦片
+HF_TOKEN=hf_...  scripts/setup_mcmnet.sh        # 克隆 MCM_streaming、从 HF 下载权重 / 打分头 / 船型缓存 / 环境瓦片、装 torch
 eval "$(scripts/setup_mcmnet.sh --print-env)"   # 设置 MCM_ROOT / MCM_WEIGHTS / MCM_TILES / MCM_DEVICE
 uv run envship dev --fresh --speed 5            # 设置了上述变量就会自动启动 mcmnet（--no-mcmnet 可关闭）
-uv run envship benchmark --predictors cv,kalman,imm,mcmnet   # 离线同条件对比，不受实时速度影响
+uv run envship benchmark --predictors cv,kalman,imm,mcmnet,mcmnet-top1   # 离线同条件对比，不受实时速度影响
 ```
 
 - **令牌**：`HF_TOKEN` 只从环境变量读取，不要写进代码或提交。Colab 里建议放在"密钥"（Secrets）里。
 - **速度**：CPU 上每个窗口约 0.3–0.8 s，20× 回放产生窗口的速度（约每秒 6 个）超过单进程 CPU 的处理能力，过期的窗口会被跳过、计入缺失。CPU 上用 `--speed 5` 左右或 `--mcmnet-replicas N`；有 GPU 时 `MCM_DEVICE=cuda`（脚本会自动检测）。
-- **`uv sync` 会移除 torch**：torch / scipy / osmium 不在工作区锁文件里（CPU 和 GPU 版本来源不同），`uv run` 会保留它们，但单独执行 `uv sync` 后需要重新运行 `scripts/setup_mcmnet.sh`。
-- **主预测规则**：目前取第一条候选，即 MCM 部署时记录的 top-1 规则。k-means 候选本身没有排序，所以它的主预测误差明显高于 20 条中最好一条。MCM 部署时真正服务的规则是"学习打分头选候选、与 CV 以 0.1:0.9 混合，再按转向率路由（直航用 Kalman）"。它的 MLP 打分头权重 `scorer_online_final.npz` 目前在 GitHub 和 Hugging Face 上都找不到（HF 上的 `scorer_head.pkl` 是消融用的 GBDT，与 `model/scorer/artifacts/gbdt_ablation.pkl` 相同），补齐后再作为单独的 `mcmnet-routed` 预测器上榜。
+- **`uv sync` 会移除 torch**：torch / scipy 不在工作区锁文件里（CPU 和 GPU 版本来源不同），`uv run` 会保留它们，但单独执行 `uv sync` 后需要重新运行 `scripts/setup_mcmnet.sh`。
+- **主预测规则**：k-means 候选本身没有排序，所以 top-1 的主预测误差明显高于 20 条中最好一条；部署规则（`mcmnet`）用打分头 + 路由解决这一点，离线对比见下表。
 - **离线评测** `envship benchmark`：把回放数据完整跑一遍 tracker，所有预测器对同一批窗口同步作答再统一打分，按全部 / 直航 / 转向分层输出误差，适合公平比较；实时覆盖率和延迟仍以在线排行榜为准。
 
 ### 过渡方案：MCM_streaming 部署的只读查看器
@@ -125,7 +127,7 @@ uv run envship benchmark --predictors cv,kalman,imm,mcmnet   # 离线同条件�
 packages/
   contracts/   主题名、消息模型、wire codec（msgpack + Arrow）、parquet schema、JSON Schema
   sdk/         Predictor Protocol、run_predictor 容器 runner、进程内 predict_all、examples/minimal.py
-  predictors/  内置基线：cv、kalman（K=3）、imm（CV + 左/右协调转弯，K=3）；mcmnet（MCM-Net，K=20，需另行准备，见上文）
+  predictors/  内置基线：cv、kalman（K=3）、imm（CV + 左/右协调转弯，K=3）；mcmnet / mcmnet-top1（MCM-Net，20 条候选 + 部署规则主预测 / top-1，需另行准备，见上文）
   core/        ingest_fi、replay、tracker(+features)、reconcile、jobs、api、devstack、cli
 web/           React 前端
 docker/        Dockerfile、web.Dockerfile、Caddyfile、prometheus/grafana 配置
